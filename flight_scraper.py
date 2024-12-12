@@ -44,35 +44,51 @@ class FlightScraper:
 
     def search_flight_info(self, flight_number, origin):
         """
-        Search for flight information using Google Custom Search
+        Search for flight information using Google Custom Search on FlightAware
         """
         try:
-            # Simple direct query format: AM782 GDL LAX "Gate Arrival" "PST"
-            query = f"{flight_number} {origin} LAX \"Gate Arrival\" \"PST\""
-            
+            # Search FlightAware only
+            query = f"{flight_number} LAX \"Landing\" \"Gate Arrival\""
             result = self.service.cse().list(
                 q=query,
                 cx=self.search_engine_id,
                 num=1
             ).execute()
 
-            if 'items' in result:
-                return result['items'][0]
-            return None
+            return result['items'][0] if 'items' in result else None
 
         except Exception as e:
             print(f"Error searching for flight {flight_number}: {str(e)}")
             return None
     
     def extract_arrival_time(self, search_result):
+        """
+        Extract arrival times (ATA, STA, and Blocked) from FlightAware search result
+        Returns a dictionary with all three times
+        """
         if not search_result:
             return None
-            
+
         snippet = search_result.get('snippet', '')
+        times = {
+            'ata': None,  # Actual Time of Arrival
+            'sta': None,  # Scheduled Time of Arrival
+            'blocked': None  # Gate Arrival Time
+        }
         
-        # Look for time between "Gate Arrival. " and " PST"
-        match = re.search(r'Gate Arrival\.\s+(\d{1,2}:\d{2}(?:AM|PM))\s+PST', snippet)
-        if match:
-            return match.group(1).strip()
+        # Extract ATA (Landing time)
+        ata_match = re.search(r'Landing\.\s+(\d{1,2}:\d{2}(?:AM|PM))\s+PST', snippet)
+        if ata_match:
+            times['ata'] = ata_match.group(1).strip()
             
-        return None
+        # Extract STA (Scheduled time)
+        sta_match = re.search(r'Scheduled\s+(\d{1,2}:\d{2}(?:AM|PM))\s+PST', snippet)
+        if sta_match:
+            times['sta'] = sta_match.group(1).strip()
+            
+        # Extract Blocked (Gate Arrival time)
+        blocked_match = re.search(r'Gate Arrival\.\s+(\d{1,2}:\d{2}(?:AM|PM))\s+PST', snippet)
+        if blocked_match:
+            times['blocked'] = blocked_match.group(1).strip()
+            
+        return times
