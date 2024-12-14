@@ -10,10 +10,11 @@ from PySide6.QtWidgets import (
     QScrollArea
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from datetime import datetime
 from flight_scraper import FlightScraper
+from flight_processor import FlightProcessor, SearchWorker
 
 class TimeLabel(QLabel):
     def __init__(self, title, parent=None):
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         
         self.current_flight_label = QLabel()
         self.current_flight_label.setWordWrap(True)
+        self.current_flight_label.setFixedHeight(140)
         self.current_flight_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         scroll_area.setWidget(self.current_flight_label)
@@ -115,22 +117,18 @@ class MainWindow(QMainWindow):
         
         self.ata_label = TimeLabel("Actual Arrival (ATA)")
         self.sta_label = TimeLabel("Scheduled Arrival (STA)")
-        self.blocked_label = TimeLabel("Gate Arrival (Blocked)")
         
         time_layout.addWidget(self.ata_label)
         time_layout.addWidget(self.sta_label)
-        time_layout.addWidget(self.blocked_label)
         
         # Add widgets to layout
         layout.addWidget(input_container, 1)  # Stretch factor 1
-        layout.addWidget(label_container, 1)  # Stretch factor 1
+        layout.addWidget(label_container)
         layout.addWidget(button_widget)  # No stretch (fixed height)
         layout.addWidget(time_widget)    # No stretch (fixed height)
         
         self.flight_scraper = FlightScraper()
-        self.flights_to_process = []
-        self.current_lines = []
-        self.processed_lines = []
+        self.flight_processor = FlightProcessor(self)
         
         # Initially disable Accept/Reject/Print buttons
         self.set_response_buttons_enabled(False)
@@ -141,11 +139,12 @@ class MainWindow(QMainWindow):
         self.reject_button.setEnabled(enabled)
 
     def show_final_results(self):
-        # Filter out None values and join lines
-        result = '\n'.join(line for line in self.processed_lines if line is not None)
-        self.input_text.setText(result + "\n\nProcessing complete")
-        # Enable print button when processing is complete
-        self.print_button.setEnabled(True)
+        # Get final results from flight processor
+        result = self.flight_processor.get_final_results()
+        if result:
+            self.input_text.setText(result)
+            # Enable print button when processing is complete
+            self.print_button.setEnabled(True)
         
     def print_results(self):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
@@ -156,134 +155,142 @@ class MainWindow(QMainWindow):
 
     def start_search(self):
         text = self.input_text.toPlainText()
-        if not text:
-            self.current_flight_label.setText("Please paste flight information first!")
-            return
-            
-        try:
-            self.current_lines = text.split('\n')
-            self.flights_to_process = self.flight_scraper.get_flight_list(text)
-            self.processed_lines = [None] * len(self.current_lines)  # Initialize with None
-            
-            # Copy non-flight lines directly
-            for i, line in enumerate(self.current_lines):
-                if line.startswith('JCSY:') or line.startswith('FLT/') or line.startswith('##'):
-                    self.processed_lines[i] = line
-                    
+        if self.flight_processor.start_processing(text):
+            self.search_button.setEnabled(False)
             self.process_next_flight()
-        except Exception as e:
-            self.current_flight_label.setText(f"Error: {str(e)}")
-            
-    def compare_times(self, time1_str, time2_str):
-        """
-        Compare two times in format HH:MMAM/PM
-        Returns True if time1 is later than time2, considering AM/PM crossover
-        """
-        if not time1_str or not time2_str:
-            return None
-        
-        time1 = datetime.strptime(time1_str, "%I:%M%p")
-        time2 = datetime.strptime(time2_str, "%I:%M%p")
-        
-        # Check for AM/PM crossover
-        time1_is_pm = "PM" in time1_str
-        time2_is_pm = "PM" in time2_str
-        
-        if time2_is_pm and not time1_is_pm:  # STA is PM, comparison is AM
-            return True  # Always delayed (red)
-        elif not time2_is_pm and time1_is_pm:  # STA is AM, comparison is PM
-            return True  # Always delayed (red)
-        
-        # Normal comparison if both are AM or both are PM
-        return time1 > time2
-        
+        else:
+            self.current_flight_label.setText("Please paste flight information first!")
+
     def process_next_flight(self):
-        if not self.flights_to_process:
+        """Start searching for the next flight"""
+        if not self.flight_processor.flights_to_process:
+            # Only show final results when there are no more flights to process
             self.show_final_results()
             return
+
+        self.current_flight = self.flight_processor.flights_to_process[0]  # Store current flight
+        JCSY_TITLE_LINES = 2
+        total = len(self.flight_processor.current_lines) - JCSY_TITLE_LINES
+        current = self.current_flight['index'] - JCSY_TITLE_LINES
+        
+        # Show processing status
+        self.current_flight_label.setText(
+            f"Processing flight {current + 1} of {total}: {self.current_flight['number']} from {self.current_flight['depapt']}\n" +
+            f"{'-'*50}\n" + self.current_flight_label.text()
+        )
+        
+        # Create and start worker thread for current flight
+        if self.flight_processor.search_worker:
+            self.flight_processor.search_worker.stop()
+            self.flight_processor.search_worker.wait()
+            self.flight_processor.search_worker.deleteLater()
             
-        flight = self.flights_to_process[0]
-        try:
-            result = self.flight_scraper.search_flight_info(flight['number'], flight['origin'])
-            if result:
-                # Prepare new search result text
-                search_result = f"Processing: Flight {flight['number']} from {flight['origin']}\n\n"
-                search_result += f"{result.get('title', '')}\n"
-                search_result += f"{result.get('snippet', '')}\n"
-                search_result += f"{'-'*50}\n"  # Add separator line at the end
-                
-                # Prepend new text to existing content
-                current_text = self.current_flight_label.text()
-                self.current_flight_label.setText(search_result + current_text)
-                
-                times = self.flight_scraper.extract_arrival_time(result)
-                if times:
-                    if times['sta']:  # If we have scheduled time, we can compare
-                        ata_delayed = self.compare_times(times['ata'], times['sta'])
-                        blocked_delayed = self.compare_times(times['blocked'], times['sta'])
-                        
-                        self.ata_label.set_time(times['ata'], ata_delayed)
-                        self.sta_label.set_time(times['sta'])
-                        self.blocked_label.set_time(times['blocked'], blocked_delayed)
-                        self.set_response_buttons_enabled(True)
-                    else:
-                        # Prepend error message
-                        self.current_flight_label.setText(
-                            "Could not find scheduled time\n" + self.current_flight_label.text()
-                        )
-                        self.reject_time()
-                else:
-                    # Prepend error message
-                    self.current_flight_label.setText(
-                        "Could not find arrival times\n" + self.current_flight_label.text()
-                    )
-                    self.reject_time()
-            else:
-                # Prepend error message
-                self.current_flight_label.setText(
-                    f"No search results found for flight {flight['number']}\n{'-'*50}\n" + 
-                    self.current_flight_label.text()
+        self.flight_processor.search_worker = SearchWorker(self.flight_scraper, self.current_flight)
+        self.flight_processor.search_worker.result_ready.connect(self.handle_search_result)
+        self.flight_processor.search_worker.error_occurred.connect(self.handle_search_error)
+        self.flight_processor.search_worker.search_complete.connect(self.handle_search_complete)
+        self.flight_processor.search_worker.start()
+
+    def handle_search_result(self, result):
+        """Handle search result in main thread"""
+        # Store times in member variables
+        self.current_sta = result['sta']
+        self.current_ata = result['ata']
+        if not result['snippet'] and self.current_ata:
+            self.accept_time(quiet=True)
+        else:
+            search_result = f"Processing: Flight {self.current_flight['number']} from {self.current_flight['depapt']}\n\n"
+            search_result += f"{result['snippet']}\n"
+            search_result += f"{'-'*50}\n"
+            if self.current_sta:
+                ata_delayed = self.current_ata > self.current_sta if self.current_ata else None
+                self.ata_label.set_time(
+                    f"ATA: {self.current_ata.strftime('%H:%M')}" if self.current_ata else "ATA: --:--", 
+                    ata_delayed
                 )
-                self.reject_time()
-        except Exception as e:
-            # Prepend error message
-            self.current_flight_label.setText(
-                f"Error: {str(e)}\n{'-'*50}\n" + 
-                self.current_flight_label.text()
-            )
-            self.reject_time()
-            
-    def accept_time(self):
-        if self.flights_to_process:
-            flight = self.flights_to_process[0]
-            result = self.flight_scraper.search_flight_info(flight['number'], flight['origin'])
-            times = self.flight_scraper.extract_arrival_time(result)
-            if times and times['blocked']:
+                self.sta_label.set_time(
+                    f"STA: {self.current_sta.strftime('%H:%M')}" if self.current_sta else "STA: --:--"
+                )
+            self.current_flight_label.setText(search_result + self.current_flight_label.text())
+            self.set_response_buttons_enabled(True)
+            # Don't process next flight - wait for user input
+
+    def handle_search_error(self, error_message):
+        """Handle error in main thread"""
+        self.current_flight_label.setText(
+            f"Error processing {self.current_flight['number']} from {self.current_flight['depapt']}: {error_message}\n{'-'*50}\n" + 
+            self.current_flight_label.text()
+        )
+        self.reject_time()
+
+    def handle_search_complete(self):
+        """Handle search completion"""
+        if self.flight_processor.search_worker:
+            self.flight_processor.search_worker.stop()
+            self.flight_processor.search_worker.wait()
+            self.flight_processor.search_worker.deleteLater()
+            self.flight_processor.search_worker = None
+        
+        # Don't call show_final_results here
+        # The final results will be shown by process_next_flight after the last flight is processed
+        self.is_processing = False
+        self.search_button.setEnabled(True)
+
+    def accept_time(self, quiet=False):
+        if self.flight_processor.flights_to_process:
+            flight = self.flight_processor.flights_to_process[0]
+            if self.current_ata:
                 parts = flight['line'].split()
                 if len(parts) >= 2:
-                    # Insert blocked time after origin airport without spaces
-                    new_line = f"{parts[0]} /{parts[1].strip('/')}{times['blocked']}"
+                    ata_time = self.current_ata.strftime("%H%M")
+                    new_line = f"{parts[0]} /{parts[1].strip('/')}  {ata_time}"
                     if len(parts) > 2:
-                        new_line += " ".join(parts[2:])
-                    # Store in the correct position
-                    self.processed_lines[flight['index']] = new_line
+                        new_line += " " + " ".join(parts[2:])
+                    self.flight_processor.processed_lines[flight['index']] = new_line
+                    
+                    # Always show processing status in current_flight_label
+                    self.current_flight_label.setText(
+                        f"Accepted: {new_line}\n{'-'*50}\n" + 
+                        self.current_flight_label.text())
             
-        self.flights_to_process.pop(0)
-        self.set_response_buttons_enabled(False)
-        self.process_next_flight()
-        
+            self.flight_processor.flights_to_process.pop(0)
+            if not quiet:
+                self.set_response_buttons_enabled(False)
+            # Clear current times
+            self.current_sta = None
+            self.current_ata = None
+            
+            # Clean up current thread before starting next flight
+            if self.flight_processor.search_worker:
+                self.flight_processor.search_worker.stop()
+                self.flight_processor.search_worker.wait()
+                self.flight_processor.search_worker.deleteLater()
+                self.flight_processor.search_worker = None
+            
+            # Small delay before starting next flight
+            QTimer.singleShot(100, self.process_next_flight)
+
     def reject_time(self):
-        if self.flights_to_process:
-            flight = self.flights_to_process[0]
+        if self.flight_processor.flights_to_process:
+            flight = self.flight_processor.flights_to_process[0]
             # Keep original line in its position
-            self.processed_lines[flight['index']] = flight['line']
+            self.flight_processor.processed_lines[flight['index']] = flight['line']
             # Prepend rejected flight info to result history
             self.current_flight_label.setText(
                 f"Rejected: {flight['line']}\n{'-'*50}\n" + 
                 self.current_flight_label.text())
-            self.flights_to_process.pop(0)
+            self.flight_processor.flights_to_process.pop(0)
         self.set_response_buttons_enabled(False)
-        self.process_next_flight()
+        
+        # Clean up current thread before starting next flight
+        if self.flight_processor.search_worker:
+            self.flight_processor.search_worker.stop()
+            self.flight_processor.search_worker.wait()
+            self.flight_processor.search_worker.deleteLater()
+            self.flight_processor.search_worker = None
+            
+        # Small delay before starting next flight
+        QTimer.singleShot(100, self.process_next_flight)
 
     def resizeEvent(self, event):
         """Handle window resize events to adjust font sizes"""
@@ -301,3 +308,13 @@ class MainWindow(QMainWindow):
         # Update input text font
         self.input_font.setPointSize(font_size)
         self.input_text.setFont(self.input_font)
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        if self.flight_processor.search_worker:
+            self.flight_processor.search_worker.stop()
+            self.flight_processor.search_worker.wait()
+            self.flight_processor.search_worker.deleteLater()
+            self.flight_processor.search_worker = None
+        self.is_processing = False
+        super().closeEvent(event)
