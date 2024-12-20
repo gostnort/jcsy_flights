@@ -7,7 +7,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLabel,
     QFrame,
-    QScrollArea
+    QScrollArea,
+    QInputDialog,
+    QMessageBox
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
@@ -153,112 +155,59 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
             self.input_text.print_(printer)
 
+
     def start_search(self):
         text = self.input_text.toPlainText()
-        if self.flight_processor.start_processing(text):
-            self.search_button.setEnabled(False)
-            self.process_next_flight()
-        else:
+        if not text:
             self.current_flight_label.setText("Please paste flight information first!")
-
-    def process_next_flight(self):
-        """Start searching for the next flight"""
-        if not self.flight_processor.flights_to_process:
-            # Only show final results when there are no more flights to process
-            self.show_final_results()
             return
 
-        self.current_flight = self.flight_processor.flights_to_process[0]  # Store current flight
-        JCSY_TITLE_LINES = 2
-        total = len(self.flight_processor.current_lines) - JCSY_TITLE_LINES
-        current = self.current_flight['index'] - JCSY_TITLE_LINES
-        
-        # Show processing status
-        self.current_flight_label.setText(
-            f"Processing flight {current + 1} of {total}: {self.current_flight['number']} from {self.current_flight['depapt']}\n" +
-            f"{'-'*50}\n" + self.current_flight_label.text()
-        )
-        
-        # Create and start worker thread for current flight
-        if self.flight_processor.search_worker:
-            self.flight_processor.search_worker.stop()
-            self.flight_processor.search_worker.wait()
-            self.flight_processor.search_worker.deleteLater()
+        try:
+            if not self.flight_processor.start_processing(text):
+                return
+                
+            if 'std' not in self.flight_scraper.jcsy_flight:
+                time_str, ok = QInputDialog.getText(
+                    self,
+                    "Manual Input Required",
+                    "Enter JCSY flight departure time (24-hour format, e.g., 2220 for 10:20 PM):"
+                )
+                if ok and time_str:
+                    if len(time_str) != 4 or not time_str.isdigit():
+                        QMessageBox.warning(self, "Invalid Input", 
+                            "Please enter time in 24-hour format (e.g., 2220 for 10:20 PM)")
+                        return
+                    else:
+                        self.flight_scraper.jcsy_flight['std'] = self.flight_scraper.set_4digit_time(time_str)
+                    if not self.flight_scraper.jcsy_flight['std']:
+                        QMessageBox.warning(self, "Error", 
+                            "Failed to set departure time. Please try again.")
+                        return
+                else:
+                    return  # User cancelled
+
+            self.search_button.setEnabled(False)
+            # Start processing with flight processor's method
+            self.flight_processor.update_processing_status(
+                self.flight_processor.process_next_flight()
+            )
             
-        self.flight_processor.search_worker = SearchWorker(self.flight_scraper, self.current_flight)
-        self.flight_processor.search_worker.result_ready.connect(self.handle_search_result)
-        self.flight_processor.search_worker.error_occurred.connect(self.handle_search_error)
-        self.flight_processor.search_worker.search_complete.connect(self.handle_search_complete)
-        self.flight_processor.search_worker.start()
+        except Exception as e:
+            self.current_flight_label.setText(f"Error: {str(e)}")
 
-    def handle_search_result(self, result):
-        """Handle search result in main thread"""
-        # Store times in member variables
-        self.current_sta = result['sta']
-        self.current_ata = result['ata']
-        if not result['snippet'] and self.current_ata:
-            self.accept_time(quiet=True)
-        else:
-            search_result = f"Processing: Flight {self.current_flight['number']} from {self.current_flight['depapt']}\n\n"
-            search_result += f"{result['snippet']}\n"
-            search_result += f"{'-'*50}\n"
-            if self.current_sta:
-                ata_delayed = self.current_ata > self.current_sta if self.current_ata else None
-                self.ata_label.set_time(
-                    f"ATA: {self.current_ata.strftime('%H:%M')}" if self.current_ata else "ATA: --:--", 
-                    ata_delayed
-                )
-                self.sta_label.set_time(
-                    f"STA: {self.current_sta.strftime('%H:%M')}" if self.current_sta else "STA: --:--"
-                )
-            self.current_flight_label.setText(search_result + self.current_flight_label.text())
-            self.set_response_buttons_enabled(True)
-            # Don't process next flight - wait for user input
-
-    def handle_search_error(self, error_message):
-        """Handle error in main thread"""
-        self.current_flight_label.setText(
-            f"Error processing {self.current_flight['number']} from {self.current_flight['depapt']}: {error_message}\n{'-'*50}\n" + 
-            self.current_flight_label.text()
-        )
-        self.reject_time()
-
-    def handle_search_complete(self):
-        """Handle search completion"""
-        if self.flight_processor.search_worker:
-            self.flight_processor.search_worker.stop()
-            self.flight_processor.search_worker.wait()
-            self.flight_processor.search_worker.deleteLater()
-            self.flight_processor.search_worker = None
-        
-        # Don't call show_final_results here
-        # The final results will be shown by process_next_flight after the last flight is processed
-        self.is_processing = False
-        self.search_button.setEnabled(True)
 
     def accept_time(self, quiet=False):
         if self.flight_processor.flights_to_process:
-            flight = self.flight_processor.flights_to_process[0]
-            if self.current_ata:
-                parts = flight['line'].split()
-                if len(parts) >= 2:
-                    ata_time = self.current_ata.strftime("%H%M")
-                    new_line = f"{parts[0]} /{parts[1].strip('/')}  {ata_time}"
-                    if len(parts) > 2:
-                        new_line += " " + " ".join(parts[2:])
-                    self.flight_processor.processed_lines[flight['index']] = new_line
-                    
-                    # Always show processing status in current_flight_label
-                    self.current_flight_label.setText(
-                        f"Accepted: {new_line}\n{'-'*50}\n" + 
-                        self.current_flight_label.text())
+            # Use FlightProcessor's accept method
+            new_line = self.flight_processor.accept_current_flight()
+            if new_line:
+                # Show processing status in current_flight_label
+                self.current_flight_label.setText(
+                    f"Accepted: {new_line}\n{'-'*50}\n" + 
+                    self.current_flight_label.text())
             
-            self.flight_processor.flights_to_process.pop(0)
             if not quiet:
                 self.set_response_buttons_enabled(False)
-            # Clear current times
-            self.current_sta = None
-            self.current_ata = None
             
             # Clean up current thread before starting next flight
             if self.flight_processor.search_worker:
@@ -267,19 +216,20 @@ class MainWindow(QMainWindow):
                 self.flight_processor.search_worker.deleteLater()
                 self.flight_processor.search_worker = None
             
-            # Small delay before starting next flight
-            QTimer.singleShot(100, self.process_next_flight)
+            # Start next flight
+            QTimer.singleShot(100, lambda: self.update_processing_status(
+                self.flight_processor.process_next_flight()
+            ))
 
     def reject_time(self):
         if self.flight_processor.flights_to_process:
-            flight = self.flight_processor.flights_to_process[0]
-            # Keep original line in its position
-            self.flight_processor.processed_lines[flight['index']] = flight['line']
-            # Prepend rejected flight info to result history
-            self.current_flight_label.setText(
-                f"Rejected: {flight['line']}\n{'-'*50}\n" + 
-                self.current_flight_label.text())
-            self.flight_processor.flights_to_process.pop(0)
+            # Use FlightProcessor's reject method
+            rejected_line = self.flight_processor.reject_current_flight()
+            if rejected_line:
+                self.current_flight_label.setText(
+                    f"Rejected: {rejected_line}\n{'-'*50}\n" + 
+                    self.current_flight_label.text())
+                    
         self.set_response_buttons_enabled(False)
         
         # Clean up current thread before starting next flight
@@ -289,8 +239,10 @@ class MainWindow(QMainWindow):
             self.flight_processor.search_worker.deleteLater()
             self.flight_processor.search_worker = None
             
-        # Small delay before starting next flight
-        QTimer.singleShot(100, self.process_next_flight)
+        # Start next flight
+        QTimer.singleShot(100, lambda: self.update_processing_status(
+            self.flight_processor.process_next_flight()
+        ))
 
     def resizeEvent(self, event):
         """Handle window resize events to adjust font sizes"""
@@ -311,10 +263,75 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event"""
-        if self.flight_processor.search_worker:
-            self.flight_processor.search_worker.stop()
-            self.flight_processor.search_worker.wait()
-            self.flight_processor.search_worker.deleteLater()
-            self.flight_processor.search_worker = None
-        self.is_processing = False
+        self.flight_processor.cleanup()  # Call cleanup instead of direct worker handling
         super().closeEvent(event)
+
+    def update_processing_status(self, process_info):
+        """Update UI with current processing status and handle worker"""
+        if not process_info:
+            self.show_final_results()
+            return
+
+        # Show processing status
+        self.current_flight_label.setText(
+            f"Processing flight {process_info['current']} of {process_info['total']}: "
+            f"{process_info['flight']['airline']}{process_info['flight']['number']} "
+            f"from {process_info['flight']['depapt']}\n"
+            f"{'-'*50}\n" + self.current_flight_label.text()
+        )
+        
+        # Setup and start worker
+        worker = process_info['worker']
+        worker.result_ready.connect(self.handle_search_result)
+        worker.error_occurred.connect(self.handle_search_error)
+        worker.search_complete.connect(self.handle_search_complete)
+        worker.start()
+
+    def handle_search_result(self, result):
+        """Handle search result"""
+        if not self.flight_processor.current_flight:  # Safety check
+            return
+            
+        # Store times in processor
+        self.flight_processor.current_sta = result['sta']
+        self.flight_processor.current_ata = result['ata']
+        # Update current flight's is_yesterday flag
+        self.flight_processor.current_flight['is_yesterday'] = result.get('is_yesterday', False)
+        
+        if not result['sta'] and not result['ata']:
+            self.reject_time()
+            return
+            
+        if not result['snippet'] and self.flight_processor.current_ata:
+            # For FlightView results, quietly accept
+            self.accept_time(quiet=True)
+            # Update input text
+            self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
+        else:
+            # For FlightAware results, show in current_flight_label and wait for user input
+            self.show_flightaware_result(result)
+
+    def show_flightaware_result(self, result):
+        """Show FlightAware result and wait for user input"""
+        flight = self.flight_processor.current_flight
+        search_result = (
+            f"Processing: Flight {flight['airline']}{flight['number']} "
+            f"from {flight['depapt']}\n\n"
+        )
+        search_result += f"{result['snippet']}\n"
+        search_result += f"{'-'*50}\n"
+        
+        if self.flight_processor.current_sta:
+            ata_delayed = (self.flight_processor.current_ata > self.flight_processor.current_sta 
+                         if self.flight_processor.current_ata else None)
+            self.ata_label.set_time(
+                f"ATA: {self.flight_processor.current_ata.strftime('%H:%M')}" 
+                if self.flight_processor.current_ata else "ATA: --:--", 
+                ata_delayed
+            )
+            self.sta_label.set_time(
+                f"STA: {self.flight_processor.current_sta.strftime('%H:%M')}" 
+                if self.flight_processor.current_sta else "STA: --:--"
+            )
+        self.current_flight_label.setText(search_result + self.current_flight_label.text())
+        self.set_response_buttons_enabled(True)
