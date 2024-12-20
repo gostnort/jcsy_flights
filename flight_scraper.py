@@ -114,20 +114,20 @@ class FlightScraper:
     # Return a dictionary with the following keys:
     # - ata: the actual arrival time
     # - sta: the scheduled arrival time
-    def flightview_search(self, a_flight:dict, bol_departure:bool=True):
+    def flightview_search(self, a_flight:dict):
         """Search flight using FlightView"""
         try:
             # Try current date first
-            result = self._try_date_search(a_flight, self.flightview_date, bol_departure)
-            if result:
-                return result
-
-            # If no scheduled time found, try yesterday's date
-            yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-            result = self._try_date_search(a_flight, yesterday, bol_departure)
-            if result:
-                self.search_result['is_yesterday'] = True  # Mark as yesterday's flight
-                return self.search_result
+            result = self._try_date_search(a_flight, self.flightview_date)
+            if result and result['sta']:  # Need to check if result exists and has sta
+                if self.jcsy_flight['std'] < result['sta']:
+                    yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                    result = self._try_date_search(a_flight, yesterday)
+                    if result:
+                        self.search_result['is_yesterday'] = True  # Mark as yesterday's flight
+                        return self.search_result
+                else:
+                    return result
 
             self.search_result = {'ata': None, 'sta': None, 'snippet': None, 'is_yesterday': False}
             return None
@@ -136,23 +136,14 @@ class FlightScraper:
             self.search_result = {'ata': None, 'sta': None, 'snippet': None, 'is_yesterday': False}
             return None
 
-    def _try_date_search(self, a_flight:dict, search_date:str, bol_departure:bool):
+    def _try_date_search(self, a_flight:dict, search_date:str):
         """Helper function to search flight with specific date"""
         try:
-            if bol_departure:
-                flight_info = self.flightview_crawler.get_flight_info(
-                    a_flight['airline'],
-                    a_flight['number'],
-                    search_date,
-                    depapt=a_flight['depapt']
-                )
-            else:
-                flight_info = self.flightview_crawler.get_flight_info(
-                    a_flight['airline'],
-                    a_flight['number'],
-                    search_date,
-                    depapt=None
-                )
+            flight_info = self.flightview_crawler.get_flight_info(
+                a_flight['airline'],
+                a_flight['number'],
+                search_date
+            )
             if flight_info and flight_info.get('arrival'):
                 arr_info = flight_info['arrival']
                 if arr_info.get('scheduled') != "N/A":
