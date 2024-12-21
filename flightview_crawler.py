@@ -44,7 +44,7 @@ class FlightViewScraper:
                 url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}"
             else:
                 url = f"{self.base_url}/{airline}/{flight_number}?date={date}&arrapt={arrapt}"
-                
+            print(url)    
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
             

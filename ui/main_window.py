@@ -73,13 +73,19 @@ class MainWindow(QMainWindow):
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setMinimumHeight(140)  # Set minimum height for scroll area
+        
+        scroll_widget = QWidget()  # Add container widget
+        scroll_layout = QVBoxLayout(scroll_widget)  # Add layout
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
         
         self.current_flight_label = QLabel()
         self.current_flight_label.setWordWrap(True)
-        self.current_flight_label.setFixedHeight(140)
+        self.current_flight_label.setMinimumHeight(140)  # Set minimum height for label
         self.current_flight_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        scroll_area.setWidget(self.current_flight_label)
+        scroll_layout.addWidget(self.current_flight_label)
+        scroll_area.setWidget(scroll_widget)  # Set container as scroll area widget
         label_layout.addWidget(scroll_area)
         
         # Create button row with fixed height
@@ -232,16 +238,21 @@ class MainWindow(QMainWindow):
                 self.flight_processor.process_next_flight()
             ))
 
-    def reject_time(self):
+    def reject_time(self,snippet=None):
         """Reject current flight and keep original line"""
         if self.flight_processor.flights_to_process:
             flight = self.flight_processor.flights_to_process[0]
             # Keep original line
-            self.flight_processor.processed_lines[flight['row']] = flight['line']
+            self.flight_processor.processed_lines[flight['row']-1] = flight['line']
             # Show in current_flight_label
-            self.current_flight_label.setText(
-                f"Rejected: {flight['line']}\n{'-'*50}\n" + 
-                self.current_flight_label.text())
+            if snippet:
+                self.current_flight_label.setText(
+                    f"Rejected: {flight['line']}\n{snippet}\n{'-'*50}\n" + 
+                    self.current_flight_label.text())
+            else:
+                self.current_flight_label.setText(
+                    f"Rejected: {flight['line']}\n{'-'*50}\n" + 
+                    self.current_flight_label.text())
             
             self.flight_processor.flights_to_process.pop(0)
             self.set_response_buttons_enabled(False)
@@ -324,17 +335,15 @@ class MainWindow(QMainWindow):
         # Store times in processor
         self.flight_processor.current_sta = result['sta']
         self.flight_processor.current_ata = result['ata']
-        # Update current flight's is_yesterday flag
         self.flight_processor.current_flight['is_yesterday'] = result.get('is_yesterday', False)
         
         if not result['sta'] and not result['ata']:
-            self.reject_time()
+            self.reject_time(result.get('snippet'))  # Pass snippet to reject_time
             return
             
         if not result['snippet'] and self.flight_processor.current_ata:
             # For FlightView results, quietly accept
             self.accept_time(quiet=True)
-            # Update input text
             self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
         else:
             # For FlightAware results, show in current_flight_label and wait for user input

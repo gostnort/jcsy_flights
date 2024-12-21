@@ -119,6 +119,8 @@ class FlightScraper:
         try:
             # Try current date first
             result = self._try_date_search(a_flight, self.flightview_date)
+            if result == None:
+                result = self._try_date_search(a_flight, self.flightview_date,depapt=a_flight['depapt'])  
             if result and result['sta']:  # Need to check if result exists and has sta
                 if self.jcsy_flight['std'] < result['sta']:
                     yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
@@ -136,13 +138,14 @@ class FlightScraper:
             self.search_result = {'ata': None, 'sta': None, 'snippet': None, 'is_yesterday': False}
             return None
 
-    def _try_date_search(self, a_flight:dict, search_date:str):
+    def _try_date_search(self, a_flight:dict, search_date:str,depapt=None):
         """Helper function to search flight with specific date"""
         try:
             flight_info = self.flightview_crawler.get_flight_info(
                 a_flight['airline'],
                 a_flight['number'],
-                search_date
+                search_date,
+                depapt=depapt
             )
             if flight_info and flight_info.get('arrival'):
                 arr_info = flight_info['arrival']
