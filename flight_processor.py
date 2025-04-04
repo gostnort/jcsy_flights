@@ -52,6 +52,9 @@ class FlightProcessor:
         # Time tracking
         self.current_sta = None
         self.current_ata = None
+        
+        # Track processing state for each flight
+        self.processing_states = {}
 
     def cleanup_worker(self):
         """Centralized worker cleanup"""
@@ -75,6 +78,9 @@ class FlightProcessor:
             # Initialize processed_lines with original text
             self.processed_lines = self.current_lines.copy()
             
+            # Initialize processing state for each flight
+            self.processing_states = {flight['row']: 'pending' for flight in self.flights_to_process}
+            
             self.is_processing = True
             return True
             
@@ -93,6 +99,9 @@ class FlightProcessor:
         total = len(self.current_lines) - JCSY_TITLE_LINES
         current = self.current_flight['row'] - JCSY_TITLE_LINES
         
+        # Mark current flight as processing
+        self.processing_states[self.current_flight['row']] = 'processing'
+        
         # Create new worker
         self.search_worker = SearchWorker(self.main_window.flight_scraper, self.current_flight)
         return {
@@ -101,6 +110,11 @@ class FlightProcessor:
             'total': total,
             'flight': self.current_flight
         }
+        
+    def update_flight_state(self, row, state):
+        """Update the state of a flight in processing_states"""
+        if row in self.processing_states:
+            self.processing_states[row] = state
 
     def get_final_results(self):
         """Return the final processed text with all lines in original order"""
@@ -113,3 +127,4 @@ class FlightProcessor:
         self.current_flight = None
         self.current_sta = None
         self.current_ata = None
+        self.processing_states = {}

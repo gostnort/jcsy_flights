@@ -219,7 +219,12 @@ class MainWindow(QMainWindow):
                         new_line += " " + " ".join(parts[2:])
                     self.flight_processor.processed_lines[flight['row'] -1] = new_line
                     
+                    # Mark this flight as completed
+                    self.flight_processor.update_flight_state(flight['row'], 'completed')
+                    
+                    # Update text in UI to show current state
                     if not quiet:
+                        self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
                         # Show processing status in current_flight_label
                         self.current_flight_label.setText(
                             f"Accepted: {new_line}\n{'-'*50}\n" + 
@@ -244,6 +249,13 @@ class MainWindow(QMainWindow):
             flight = self.flight_processor.flights_to_process[0]
             # Keep original line
             self.flight_processor.processed_lines[flight['row']-1] = flight['line']
+            
+            # Mark this flight as rejected
+            self.flight_processor.update_flight_state(flight['row'], 'rejected')
+            
+            # Update text in UI to show current state
+            self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
+            
             # Show in current_flight_label
             if snippet:
                 self.current_flight_label.setText(
@@ -265,6 +277,10 @@ class MainWindow(QMainWindow):
     def handle_search_error(self, error_message):
         """Handle search error"""
         if self.flight_processor.current_flight:
+            # Mark this flight as error
+            self.flight_processor.update_flight_state(
+                self.flight_processor.current_flight['row'], 'error')
+                
             self.current_flight_label.setText(
                 f"Error processing {self.flight_processor.current_flight['airline']}"
                 f"{self.flight_processor.current_flight['number']} from "
@@ -320,6 +336,10 @@ class MainWindow(QMainWindow):
             f"{'-'*50}\n" + self.current_flight_label.text()
         )
         
+        # Update the input text with the current state of processed lines
+        # This ensures the UI shows accurate data even during processing
+        self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
+        
         # Setup and start worker
         worker = process_info['worker']
         worker.result_ready.connect(self.handle_search_result)
@@ -344,7 +364,8 @@ class MainWindow(QMainWindow):
         if not result['snippet'] and self.flight_processor.current_ata:
             # For FlightView results, quietly accept
             self.accept_time(quiet=True)
-            self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
+            # Remove immediate UI update to prevent race condition
+            # self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
         else:
             # For FlightAware results, show in current_flight_label and wait for user input
             self.show_flightaware_result(result)
