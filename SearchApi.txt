@@ -1,7 +1,0 @@
-api
-AIzaSyB6VOIk0l6xKGKKmhuaQF8mmduyBk1d5jg
-search engine
-21d9e739fcf6c4bdc
-
-https://console.cloud.google.com/apis/dashboard
-https://programmablesearchengine.google.com/
