@@ -20,7 +20,7 @@ from flights_dispatch import FlightProcessor
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Flight Arrival/Departure Time Checker")
+        self.setWindowTitle("JCSY Time Checker 0.31")
         self.setMinimumSize(610, 480) # Adjusted min height after removing time labels
         
         central_widget = QWidget()
