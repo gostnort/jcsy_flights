@@ -75,16 +75,6 @@ class FlightProcessor(QObject):
         
         # Processing flag
         self.is_processing = False
-        
-        # Connect signals to main window if possible
-        if hasattr(main_window, 'update_status_signal'):
-            self.signals.status_update.connect(main_window.update_status_signal.emit)
-        if hasattr(main_window, 'handle_flight_started'):
-            self.signals.flight_started.connect(main_window.handle_flight_started)
-        if hasattr(main_window, 'handle_flight_completed'):
-            self.signals.flight_completed.connect(main_window.handle_flight_completed)
-        if hasattr(main_window, 'processing_complete_signal'):
-            self.signals.all_flights_completed.connect(main_window.processing_complete_signal.emit)
 
     def cleanup_workers(self):
         """Centralized worker cleanup"""
@@ -125,10 +115,7 @@ class FlightProcessor(QObject):
             self.processed_lines = self.current_lines.copy() # Start with original
             self.processing_states = {flight['row']: 'pending' for flight in self.flights_to_process}
             self.is_processing = True
-            
-            self.signals.status_update.emit(f"Processing started for {self.initial_flight_count} flights.")
-            print(f"Processing started for {self.initial_flight_count} flights.") # Use initial count
-            
+                         
             # Start processing all flights in parallel (up to max thread count)
             self.process_flights()
             
@@ -180,6 +167,7 @@ class FlightProcessor(QObject):
             # Emit signal that flight processing started
             self.signals.flight_started.emit(next_flight)
             
+            # Log but don't show duplicate message
             print(f"Started processing flight {next_flight['airline']}{next_flight['number']} (Row: {next_flight['row']})")
 
     def handle_result(self, flight, result):
