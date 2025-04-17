@@ -6,153 +6,143 @@ from PySide6.QtWidgets import (
     QTextEdit, 
     QPushButton,
     QLabel,
-    QFrame,
     QScrollArea,
-    QInputDialog,
-    QMessageBox
+    QRadioButton,
+    QButtonGroup,
+    QSplitter
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-from datetime import datetime
 from flight_scraper import FlightScraper
-from flights_dispatch import FlightProcessor, SearchWorker
-
-class TimeLabel(QLabel):
-    def __init__(self, title, parent=None):
-        super().__init__(parent)
-        self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Sunken)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumWidth(50)
-        # Set Segoe UI Bold font
-        font = QFont("Segoe UI", 12, QFont.Weight.Bold)
-        self.setFont(font)
-        self.setText(f"{title}\n--:--")
-        
-    def set_time(self, time_str, is_delayed=None):
-        if not time_str:
-            self.setText("--:--")
-            self.setStyleSheet("")
-            return
-            
-        self.setText(time_str)
-        if is_delayed is not None:
-            # Convert HSV to RGB for stylesheet
-            color = QColor.fromHsv(2, int(0.7 * 255), int(0.5 * 255)) if is_delayed else QColor.fromHsv(130, int(0.7 * 255), int(0.5 * 255))
-            self.setStyleSheet(f"background-color: {color.name()};")
+from flights_dispatch import FlightProcessor
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Flight Arrival Time Checker")
-        self.setMinimumSize(680, 480)
+        self.setWindowTitle("Flight Arrival/Departure Time Checker")
+        self.setMinimumSize(610, 480) # Adjusted min height after removing time labels
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
-        layout.setSpacing(0)  # Remove spacing between widgets
+        layout.setSpacing(0)
         
-        # Create text input area with container
+        # --- List Type Selection --- 
+        list_type_widget = QWidget()
+        list_type_layout = QHBoxLayout(list_type_widget)
+        list_type_layout.setContentsMargins(5, 5, 5, 5)
+        list_type_label = QLabel("Flights type in the list:")
+        self.arrival_radio = QRadioButton("Arrivals")
+        self.departure_radio = QRadioButton("Departures")
+        self.list_type_group = QButtonGroup(self)
+        self.list_type_group.addButton(self.arrival_radio, 1)
+        self.list_type_group.addButton(self.departure_radio, 2)
+        self.arrival_radio.setChecked(True) # Default to Arrival
+        list_type_layout.addWidget(list_type_label)
+        list_type_layout.addWidget(self.arrival_radio)
+        list_type_layout.addWidget(self.departure_radio)
+        list_type_layout.addStretch()
+        # ---------------------------
+        
+        # --- Create Splitter --- 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        # -----------------------
+        
+        # Create text input area (will be added to splitter)
         input_container = QWidget()
         input_layout = QVBoxLayout(input_container)
         input_layout.setContentsMargins(0, 0, 0, 0)
-        
         self.input_text = QTextEdit()
-        self.input_text.setPlaceholderText("Paste flight information here...")
+        self.input_text.setPlaceholderText("Paste flight information here (JCSY format expected)...")
         self.input_font = QFont("Courier New", 12)
         self.input_text.setFont(self.input_font)
         input_layout.addWidget(self.input_text)
+        splitter.addWidget(input_container) # Add to splitter
         
-        # Create flight label area with container and scroll
+        # Create flight label area with scroll (will be added to splitter)
         label_container = QWidget()
         label_layout = QVBoxLayout(label_container)
         label_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Create scroll area for current_flight_label
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setMinimumHeight(140)  # Set minimum height for scroll area
-        
-        scroll_widget = QWidget()  # Add container widget
-        scroll_layout = QVBoxLayout(scroll_widget)  # Add layout
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.current_flight_label = QLabel()
+        self.current_flight_label = QLabel("Status messages will appear here...")
         self.current_flight_label.setWordWrap(True)
-        self.current_flight_label.setMinimumHeight(140)  # Set minimum height for label
         self.current_flight_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+        self.current_flight_label.setStyleSheet("padding: 5px;")
+        self.current_flight_label.setMinimumHeight(60)
         scroll_layout.addWidget(self.current_flight_label)
-        scroll_area.setWidget(scroll_widget)  # Set container as scroll area widget
+        scroll_area.setWidget(scroll_widget)
         label_layout.addWidget(scroll_area)
+        splitter.addWidget(label_container) # Add to splitter
         
-        # Create button row with fixed height
-        CONTROL_HEIGHT = 70
+        # --- Configure Splitter Appearance/Behavior (Optional) ---
+        splitter.setHandleWidth(5) # Make the handle slightly thicker
+        splitter.setStyleSheet("""
+            QSplitter::handle:vertical {
+                background-color: #AAAAAA;
+                height: 5px; /* Thickness of the handle */
+            }
+            QSplitter::handle:vertical:hover {
+                background-color: #CCCCCC;
+            }
+        """)
+        # Set initial size ratio (optional, sums don't matter, only ratio)
+        splitter.setSizes([200, 100]) # Give input more initial space
+        # ----------------------------------------------------------
+        
+        # Create button row 
+        CONTROL_HEIGHT = 60
         button_widget = QWidget()
-        button_widget.setFixedHeight(CONTROL_HEIGHT)  # Fixed height for buttons
+        button_widget.setFixedHeight(CONTROL_HEIGHT)
         button_layout = QHBoxLayout(button_widget)
         button_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.search_button = QPushButton("Search Flights")
+        self.search_button = QPushButton("Process List")
         self.search_button.setFixedHeight(CONTROL_HEIGHT - 10)
         self.search_button.clicked.connect(self.start_search)
-        
-        self.accept_button = QPushButton("Accept")
-        self.accept_button.setFixedHeight(CONTROL_HEIGHT - 10)
-        self.accept_button.clicked.connect(self.accept_time)
-        
-        self.reject_button = QPushButton("Reject")
-        self.reject_button.setFixedHeight(CONTROL_HEIGHT - 10)
-        self.reject_button.clicked.connect(self.reject_time)
         
         self.print_button = QPushButton("Print")
         self.print_button.setFixedHeight(CONTROL_HEIGHT - 10)
         self.print_button.clicked.connect(self.print_results)
         
-        # Add buttons to button layout
         button_layout.addWidget(self.search_button)
-        button_layout.addWidget(self.accept_button)
-        button_layout.addWidget(self.reject_button)
         button_layout.addWidget(self.print_button)
         
-        # Create time display row with fixed height
-        time_widget = QWidget()
-        time_widget.setFixedHeight(CONTROL_HEIGHT)  # Fixed height for time labels
-        time_layout = QHBoxLayout(time_widget)
-        time_layout.setContentsMargins(0, 0, 0, 0)
+        # Add widgets to main layout with stretch factors
+        layout.addWidget(list_type_widget)       # Stretch 0 (default)
+        layout.addWidget(splitter, 1)    # Stretch 1
+        layout.addWidget(button_widget)         # Stretch 0 (fixed height)
         
-        self.ata_label = TimeLabel("Actual Arrival (ATA)")
-        self.sta_label = TimeLabel("Scheduled Arrival (STA)")
+        # Initialize scraper and processor AFTER getting config
+        self.flight_scraper = None 
+        self.flight_processor = None
         
-        time_layout.addWidget(self.ata_label)
-        time_layout.addWidget(self.sta_label)
-        
-        # Add widgets to layout
-        layout.addWidget(input_container, 1)  # Stretch factor 1
-        layout.addWidget(label_container)
-        layout.addWidget(button_widget)  # No stretch (fixed height)
-        layout.addWidget(time_widget)    # No stretch (fixed height)
-        
-        self.flight_scraper = FlightScraper()
-        self.flight_processor = FlightProcessor(self)
-        
-        # Initially disable Accept/Reject/Print buttons
-        self.set_response_buttons_enabled(False)
         self.print_button.setEnabled(False)
         
-    def set_response_buttons_enabled(self, enabled):
-        self.accept_button.setEnabled(enabled)
-        self.reject_button.setEnabled(enabled)
+    def cleanup_app_resources(self):
+        """Safely cleans up resources like the flight processor."""
+        print("MainWindow cleanup_app_resources called...") # For debugging
+        if self.flight_processor:
+            print("Calling flight_processor.cleanup()...")
+            self.flight_processor.cleanup()
+        else:
+            print("Flight processor was not initialized, nothing to clean up.")
 
     def show_final_results(self):
-        # Get final results from flight processor
-        result = self.flight_processor.get_final_results()
-        if result:
-            self.input_text.setText(result)
-            # Enable print button when processing is complete
-            self.print_button.setEnabled(True)
+        if self.flight_processor:
+            result = self.flight_processor.get_final_results()
+            if result:
+                self.input_text.setText(result)
+                self.print_button.setEnabled(True)
+            else:
+                 self.current_flight_label.setText("Processing finished, but no results generated.")
+        self.search_button.setEnabled(True) # Re-enable search button
         
     def print_results(self):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
@@ -161,144 +151,62 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
             self.input_text.print_(printer)
 
-
     def start_search(self):
         text = self.input_text.toPlainText()
         if not text:
             self.current_flight_label.setText("Please paste flight information first!")
             return
-
+            
+        selected_type_id = self.list_type_group.checkedId()
+        list_type = 'arrival' if selected_type_id == 1 else 'departure'
+        home_airport = 'LAX' 
+        
         try:
+            self.flight_scraper = FlightScraper(list_type=list_type, home_airport=home_airport)
+            self.flight_processor = FlightProcessor(self)
+            
+            self.current_flight_label.setText("Starting processing...")
+            self.print_button.setEnabled(False)
+            self.search_button.setEnabled(False)
+            
             if not self.flight_processor.start_processing(text):
+                self.current_flight_label.setText("Error: Could not initialize processing. Check JCSY format.")
+                self.search_button.setEnabled(True)
                 return
                 
-            if 'std' not in self.flight_scraper.jcsy_flight:
-                time_str, ok = QInputDialog.getText(
-                    self,
-                    "Manual Input Required",
-                    "Enter JCSY flight departure time (24-hour format, e.g., 2220 for 10:20 PM):"
-                )
-                if ok and time_str:
-                    if len(time_str) != 4 or not time_str.isdigit():
-                        QMessageBox.warning(self, "Invalid Input", 
-                            "Please enter time in 24-hour format (e.g., 2220 for 10:20 PM)")
-                        return
-                    else:
-                        self.flight_scraper.jcsy_flight['std'] = self.flight_scraper.set_4digit_time(time_str)
-                    if not self.flight_scraper.jcsy_flight['std']:
-                        QMessageBox.warning(self, "Error", 
-                            "Failed to set departure time. Please try again.")
-                        return
-                else:
-                    return  # User cancelled
+            if not self.flight_scraper.flightview_date:
+                 self.current_flight_label.setText("Error: Failed to parse date from JCSY line.")
+                 self.search_button.setEnabled(True)
+                 return
 
-            self.search_button.setEnabled(False)
-            # Start processing with flight processor's method
-            self.update_processing_status(
-                self.flight_processor.process_next_flight()
-            )
+            self.process_next_flight_in_queue()
             
         except Exception as e:
-            self.current_flight_label.setText(f"Error: {str(e)}")
-
-
-    def accept_time(self, quiet=False):
-        """Accept current flight's time"""
-        if self.flight_processor.flights_to_process:
-            flight = self.flight_processor.flights_to_process[0]
-            if self.flight_processor.current_ata:
-                parts = flight['line'].split()
-                if len(parts) >= 2:
-                    ata_time = self.flight_processor.current_ata.strftime("%H%M")
-                    if flight.get('is_yesterday', False):  # Check if it's yesterday's flight
-                        ata_time = f"{ata_time}-"  # Add dash for yesterday's flight
-                        new_line = f"{parts[0]} /{parts[1].strip('/')} {ata_time}"  # One less space
-                    else:
-                        new_line = f"{parts[0]} /{parts[1].strip('/')}  {ata_time}"  # Normal format
-                    if len(parts) > 2:
-                        new_line += " " + " ".join(parts[2:])
-                    self.flight_processor.processed_lines[flight['row'] -1] = new_line
-                    
-                    # Mark this flight as completed
-                    self.flight_processor.update_flight_state(flight['row'], 'completed')
-                    
-                    # Update text in UI to show current state
-                    if not quiet:
-                        self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
-                        # Show processing status in current_flight_label
-                        self.current_flight_label.setText(
-                            f"Accepted: {new_line}\n{'-'*50}\n" + 
-                            self.current_flight_label.text())
-            
-            self.flight_processor.flights_to_process.pop(0)
-            if not quiet:
-                self.set_response_buttons_enabled(False)
-            
-            # Clear current times
-            self.flight_processor.current_sta = None
-            self.flight_processor.current_ata = None
-            
-            # Start next flight
-            QTimer.singleShot(100, lambda: self.update_processing_status(
-                self.flight_processor.process_next_flight()
-            ))
-
-    def reject_time(self,snippet=None):
-        """Reject current flight and keep original line"""
-        if self.flight_processor.flights_to_process:
-            flight = self.flight_processor.flights_to_process[0]
-            # Keep original line
-            self.flight_processor.processed_lines[flight['row']-1] = flight['line']
-            
-            # Mark this flight as rejected
-            self.flight_processor.update_flight_state(flight['row'], 'rejected')
-            
-            # Update text in UI to show current state
-            self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
-            
-            # Show in current_flight_label
-            if snippet:
-                self.current_flight_label.setText(
-                    f"Rejected: {flight['line']}\n{snippet}\n{'-'*50}\n" + 
-                    self.current_flight_label.text())
-            else:
-                self.current_flight_label.setText(
-                    f"Rejected: {flight['line']}\n{'-'*50}\n" + 
-                    self.current_flight_label.text())
-            
-            self.flight_processor.flights_to_process.pop(0)
-            self.set_response_buttons_enabled(False)
-            
-            # Start next flight
-            QTimer.singleShot(100, lambda: self.update_processing_status(
-                self.flight_processor.process_next_flight()
-            ))
+            self.current_flight_label.setText(f"Error during setup: {str(e)}")
+            self.search_button.setEnabled(True)
 
     def handle_search_error(self, error_message):
-        """Handle search error"""
-        if self.flight_processor.current_flight:
-            # Mark this flight as error
-            self.flight_processor.update_flight_state(
-                self.flight_processor.current_flight['row'], 'error')
-                
+        """Handle search error - Log, keep original line, move to next"""
+        if self.flight_processor and self.flight_processor.current_flight:
+            flight = self.flight_processor.current_flight
+            print(f"Error processing flight {flight['airline']}{flight['number']}: {error_message}")
             self.current_flight_label.setText(
-                f"Error processing {self.flight_processor.current_flight['airline']}"
-                f"{self.flight_processor.current_flight['number']} from "
-                f"{self.flight_processor.current_flight['depapt']}: {error_message}\n{'-'*50}\n" + 
+                f"Error on {flight['airline']}{flight['number']}: {error_message}\n" 
+                f"Keeping original line: {flight['line']}\n{'-'*50}\n" +
                 self.current_flight_label.text()
             )
-        self.reject_time()
+            self.flight_processor.finalize_flight_result(flight, None, error=True)
+            self.process_next_flight_in_queue()
+        else:
+            self.current_flight_label.setText(f"An unexpected error occurred: {error_message}")
+            self.handle_search_complete() 
 
     def handle_search_complete(self):
-        """Handle search completion"""
-        if self.flight_processor.search_worker:
-            self.flight_processor.search_worker.stop()
-            self.flight_processor.search_worker.wait()
-            self.flight_processor.search_worker.deleteLater()
-            self.flight_processor.search_worker = None
-        
-        self.flight_processor.is_processing = False
-        self.search_button.setEnabled(True)
+        """Called when a single worker finishes (successfully or with error)"""
+        # This is now less important as we trigger next flight directly
+        # but good for cleanup if needed in future.
+        if self.flight_processor and self.flight_processor.search_worker:
+            self.flight_processor.cleanup_worker() 
 
     def resizeEvent(self, event):
         """Handle window resize events to adjust font sizes"""
@@ -306,12 +214,12 @@ class MainWindow(QMainWindow):
         width = event.size().width()
         
         # Determine font size based on window width
-        if width >= 1280:
+        if width >= 850:
             font_size = 16
-        elif width >= 1024:
+        elif width >= 750:
             font_size = 14
         else:
-            font_size = 12
+            font_size = 11
             
         # Update input text font
         self.input_font.setPointSize(font_size)
@@ -319,78 +227,53 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event"""
-        self.flight_processor.cleanup()  # Call cleanup instead of direct worker handling
+        if self.flight_processor:
+            self.flight_processor.cleanup()
         super().closeEvent(event)
 
-    def update_processing_status(self, process_info):
-        """Update UI with current processing status and handle worker"""
+    def process_next_flight_in_queue(self):
+        """Gets the next flight from the processor and starts its worker"""
+        if not self.flight_processor:
+             return 
+             
+        process_info = self.flight_processor.process_next_flight()
+        
         if not process_info:
             self.show_final_results()
             return
 
-        # Show processing status
         self.current_flight_label.setText(
             f"Processing flight {process_info['current']} of {process_info['total']}: "
             f"{process_info['flight']['airline']}{process_info['flight']['number']} "
-            f"from {process_info['flight']['depapt']}\n"
-            f"{'-'*50}\n" + self.current_flight_label.text()
+            f"({process_info['flight']['depapt']} -> {process_info['flight']['arrapt']})\n"
+            f"Original: {process_info['flight']['line']}\n{'-'*50}\n" +
+            self.current_flight_label.text()
         )
         
-        # Update the input text with the current state of processed lines
-        # This ensures the UI shows accurate data even during processing
         self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
+        QTimer.singleShot(0, lambda: self.input_text.verticalScrollBar().setValue(self.input_text.verticalScrollBar().maximum()))
         
-        # Setup and start worker
         worker = process_info['worker']
         worker.result_ready.connect(self.handle_search_result)
         worker.error_occurred.connect(self.handle_search_error)
-        worker.search_complete.connect(self.handle_search_complete)
         worker.start()
 
     def handle_search_result(self, result):
-        """Handle search result"""
-        if not self.flight_processor.current_flight:  # Safety check
+        """Handle search result - update line automatically"""
+        if not self.flight_processor or not self.flight_processor.current_flight:
             return
             
-        # Store times in processor
-        self.flight_processor.current_sta = result['sta']
-        self.flight_processor.current_ata = result['ata']
-        self.flight_processor.current_flight['is_yesterday'] = result.get('is_yesterday', False)
-        
-        if not result['sta'] and not result['ata']:
-            self.reject_time(result.get('snippet'))  # Pass snippet to reject_time
-            return
-            
-        if not result['snippet'] and self.flight_processor.current_ata:
-            # For FlightView results, quietly accept
-            self.accept_time(quiet=True)
-            # Remove immediate UI update to prevent race condition
-            # self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
-        else:
-            # For FlightAware results, show in current_flight_label and wait for user input
-            self.show_flightaware_result(result)
-
-    def show_flightaware_result(self, result):
-        """Show FlightAware result and wait for user input"""
         flight = self.flight_processor.current_flight
-        search_result = (
-            f"Processing: Flight {flight['airline']}{flight['number']} "
-            f"from {flight['depapt']}\n\n"
-        )
-        search_result += f"{result['snippet']}\n"
-        search_result += f"{'-'*50}\n"
         
-        if self.flight_processor.current_sta:
-            ata_delayed = (self.flight_processor.current_ata > self.flight_processor.current_sta 
-                         if self.flight_processor.current_ata else None)
-            self.ata_label.set_time(
-                f"ATA: {self.flight_processor.current_ata.strftime('%H:%M')}" 
-                if self.flight_processor.current_ata else "ATA: --:--", 
-                ata_delayed
-            )
-            self.sta_label.set_time(
-                f"STA: {self.flight_processor.current_sta.strftime('%H:%M')}" 
-                if self.flight_processor.current_sta else "STA: --:--"
-            )
-        self.current_flight_label.setText(search_result + self.current_flight_label.text())
-        self.set_response_buttons_enabled(True)
+        # Let processor finalize the result (update line, state)
+        self.flight_processor.finalize_flight_result(flight, result)
+        
+        # Show status briefly
+        sta = result.get('sta')
+        ata = result.get('ata')
+        is_yesterday = result.get('is_yesterday', False)
+        status_msg = f"Updated: {flight['airline']}{flight['number']}" if (sta or ata) else f"No time found: {flight['airline']}{flight['number']}"
+        if is_yesterday: status_msg += " (Yesterday)"
+        self.current_flight_label.setText(f"{status_msg}\n{'-'*50}\n" + self.current_flight_label.text())
+        
+        QTimer.singleShot(100, self.process_next_flight_in_queue)

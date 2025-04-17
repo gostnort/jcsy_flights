@@ -144,16 +144,17 @@ class FlightScraper:
         """Search flight using FlightView"""
         self._reset_search_result()
         
-        if not self.flightview_date or 'main_airport' not in self.jcsy_flight:
-             print("Flight date or JCSY main airport not set. Cannot search FlightView.")
+        # Check if date and configured home airport are set
+        if not self.flightview_date or not self.HOME_AIRPORT:
+             print("Flight date or Home Airport not set. Cannot search FlightView.")
              return self.search_result
              
         # Determine required arrapt and optional depapt for the FlightView query
-        # FlightView requires arrapt. depapt is optional but preferred if known.
-        query_arrapt = a_flight['arrapt'] # Should be set correctly in get_flight_list
+        query_arrapt = a_flight.get('arrapt') # Should be set correctly in get_flight_list
         query_depapt = a_flight.get('depapt') # Use depapt if available in a_flight
         
         if not query_arrapt:
+             # This case should ideally not happen if get_flight_list worked
              print(f"Arrival airport missing for flight {a_flight['airline']}{a_flight['number']}. Cannot search FlightView.")
              return self.search_result
              
