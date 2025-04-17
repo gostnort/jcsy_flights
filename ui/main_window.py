@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from datetime import datetime
 from flight_scraper import FlightScraper
-from flight_processor import FlightProcessor, SearchWorker
+from flights_dispatch import FlightProcessor, SearchWorker
 
 class TimeLabel(QLabel):
     def __init__(self, title, parent=None):

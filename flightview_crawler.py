@@ -28,7 +28,7 @@ class FlightViewScraper:
             print(f"Extraction error for {label}: {str(e)}")
             return "N/A"
 
-    def get_flight_info(self, airline, flight_number, date, arrapt='LAX', depapt=None):
+    def get_flight_info(self, airline, flight_number, date, arrapt, depapt=None):
         """
         Get flight information from FlightView
         Args:
