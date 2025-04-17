@@ -218,52 +218,36 @@ class FlightProcessor(QObject):
             # Keep original line on error
             self.processed_lines[row_index] = flight['line'] 
             print(f"Kept original line for flight {flight['airline']}{flight['number']} due to error.")
-        elif result and (result.get('sta') or result.get('ata')):
-            # Use ATA if available, otherwise STA
-            time_to_use = result.get('ata') or result.get('sta')
-            if time_to_use:
-                parts = flight['line'].split()
-                ata_time_str = time_to_use.strftime("%H%M")
-                is_yesterday = result.get('is_yesterday', False)
+        elif result and result.get('display_time') != '----':
+            parts = flight['line'].split()
+            if len(parts) >= 2:
+                # Format: FLT /ARPT DISPLAY_TIME [RestOfLine]
+                # Note: display_time already includes any 'd' prefix and '+/-' suffix
+                original_spacing = " " if len(flight['line']) > len(f"{parts[0]} /{parts[1].strip('/')}") + 6 else "  "
+                new_line = f"{parts[0]} /{parts[1].strip('/')}{original_spacing}{result['display_time']}"
                 
-                # Format: FLT /ARPT HHMM(-) potentially followed by other text
-                if len(parts) >= 2:
-                     formatted_time = f"{ata_time_str}-" if is_yesterday else f" {ata_time_str}" # Note leading space for today
-                     # Rebuild line: FlightCode /Airport [ExtraSpace?]FormattedTime OriginalRestOfLine...
-                     # Need careful spacing based on original line structure
-                     original_spacing = " " if len(flight['line']) > len(f"{parts[0]} /{parts[1].strip('/')}") + 6 else "  " # Heuristic: check if space after airport
-                     new_line = f"{parts[0]} /{parts[1].strip('/')}{original_spacing}{formatted_time.strip()}"
-                     
-                     # Append remaining original parts if they exist beyond time
-                     # Find where original time might have started (approx char 17-19?)
-                     time_start_approx = 18
-                     if len(flight['line']) > time_start_approx: 
-                         # Check if the rest starts with non-time chars
-                         potential_rest = flight['line'][time_start_approx:].lstrip()
-                         if potential_rest and not potential_rest[:4].isdigit(): # If it doesn't look like another time
-                             new_line += " " + potential_rest
-                             
-                     self.processed_lines[row_index] = new_line
-                     self.update_flight_state(flight['row'], 'updated')
-                     status = "updated"
-                     print(f"Updated line for flight {flight['airline']}{flight['number']}: {new_line}")
-                else:
-                     print(f"Could not format line for flight {flight['airline']}{flight['number']} - keeping original.")
-                     self.processed_lines[row_index] = flight['line']
-                     self.update_flight_state(flight['row'], 'format_error')
-                     status = "format_error"
+                # Append remaining original parts if they exist beyond time
+                time_start_approx = 18
+                if len(flight['line']) > time_start_approx: 
+                    potential_rest = flight['line'][time_start_approx:].lstrip()
+                    if potential_rest and not potential_rest[:4].isdigit():
+                        new_line += " " + potential_rest
+                        
+                self.processed_lines[row_index] = new_line
+                self.update_flight_state(flight['row'], 'updated')
+                status = "updated"
+                print(f"Updated line for flight {flight['airline']}{flight['number']}: {new_line}")
             else:
-                 # No valid time found, keep original
-                 self.processed_lines[row_index] = flight['line']
-                 self.update_flight_state(flight['row'], 'no_time_found')
-                 status = "no_time_found"
-                 print(f"No valid time found for flight {flight['airline']}{flight['number']} - keeping original.")
+                print(f"Could not format line for flight {flight['airline']}{flight['number']} - keeping original.")
+                self.processed_lines[row_index] = flight['line']
+                self.update_flight_state(flight['row'], 'format_error')
+                status = "format_error"
         else:
-            # No result or no time in result, keep original
+            # No valid display time, keep original
             self.processed_lines[row_index] = flight['line']
-            self.update_flight_state(flight['row'], 'no_result')
-            status = "no_result"
-            print(f"No result for flight {flight['airline']}{flight['number']} - keeping original.")
+            self.update_flight_state(flight['row'], 'no_time_found')
+            status = "no_time_found"
+            print(f"No valid time found for flight {flight['airline']}{flight['number']} - keeping original.")
             
         # Emit signal that flight processing is completed with status
         self.signals.flight_completed.emit(flight, status)

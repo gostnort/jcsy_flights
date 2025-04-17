@@ -17,18 +17,11 @@ class FlightScraper:
              
         self.list_type = list_type
         
-        
         # These will be set by parse_jcsy_line
         self.flightview_date = None 
         self.jcsy_flight = {} # Stores JCSY main flight number
-        
-        # Standardized return structure used by search methods
-        self.search_result = {
-            'ata': None,  # datetime object
-            'sta': None,  # datetime object
-            'snippet': None,  # Flight status text
-            'is_yesterday': False  # Flag to indicate if the flight is yesterday's
-        }
+        self.jcsy_departure_time = None # Stores departure time of the main flight
+        self.jcsy_arrival_time = None # Stores arrival time of the main flight
     
     # Processing the JCSY line and extract flight info.
     # Get the flightview_date and jcsy_flight from 'JCSY:CA0984/11DEC24/LAX,I'
@@ -138,89 +131,193 @@ class FlightScraper:
             flights.append(flight_details)
         return flights
 
-    # Search flight using flightview_crawler.
-    # Return a dictionary with the standardized search_result structure.
-    def flightview_search(self, a_flight:dict):
-        """Search flight using FlightView"""
-        self._reset_search_result()
-        
-        # Check if date and configured home airport are set
-        if not self.flightview_date or not self.HOME_AIRPORT:
-             print("Flight date or Home Airport not set. Cannot search FlightView.")
-             return self.search_result
-             
-        # Determine required arrapt and optional depapt for the FlightView query
-        query_arrapt = a_flight.get('arrapt') # Should be set correctly in get_flight_list
-        query_depapt = a_flight.get('depapt') # Use depapt if available in a_flight
-        
-        if not query_arrapt:
-             # This case should ideally not happen if get_flight_list worked
-             print(f"Arrival airport missing for flight {a_flight['airline']}{a_flight['number']}. Cannot search FlightView.")
-             return self.search_result
-             
+    def search_flight_info(self, a_flight:dict):
+        """Main search function trying FlightView first, then FlightStats"""
+        # Try FlightView first
+        print(f"Searching FlightView for {a_flight['airline']}{a_flight['number']}...")
+        result = self._search_with_provider(a_flight, use_flightview=True)
+        if result['display_time'] != '----' or result['console_msg']:
+            print(f"Found result on FlightView.")
+            return result
+
+        # Fallback to FlightStats
+        print(f"No definitive result on FlightView, falling back to FlightStats for {a_flight['airline']}{a_flight['number']}...")
+        result = self._search_with_provider(a_flight, use_flightview=False)
+        if result['display_time'] != '----' or result['console_msg']:
+            print(f"Found result on FlightStats.")
+            return result
+            
+        print(f"No information found for {a_flight['airline']}{a_flight['number']}")
+        return result
+
+    def _search_with_provider(self, a_flight:dict, use_flightview:bool):
+        """Search flight using specified provider and handle date adjustments"""
         try:
-            # Try current date first
-            result_today = self._try_date_search(a_flight, self.flightview_date, query_arrapt, depapt=query_depapt)
-            
-            if result_today: 
-                return result_today # Found on specified date
+            if not self.flightview_date or (use_flightview and not self.HOME_AIRPORT):
+                print("Required parameters not set.")
+                return {'display_time': '----', 'console_msg': None, 'sta': None, 'ata': None, 'std': None, 'atd': None}
 
-            # If not found today, try yesterday's date
-            print(f"Flight {a_flight['airline']}{a_flight['number']} not found for {self.flightview_date} on FlightView, trying yesterday...")
-            yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-            result_yesterday = self._try_date_search(a_flight, yesterday, query_arrapt, depapt=query_depapt)
-            
-            if result_yesterday:
-                self.search_result['is_yesterday'] = True
-                return self.search_result
+            # Get flight info for current date
+            try:
+                if use_flightview:
+                    flight_info = self.flightview_crawler.get_flight_info(
+                        a_flight['airline'],
+                        a_flight['number'],
+                        self.flightview_date,
+                        arrapt=a_flight.get('arrapt'),
+                        depapt=a_flight.get('depapt')
+                    )
+                else:
+                    flight_info = self.flightstats_crawler.get_flight_info(
+                        a_flight['airline'],
+                        a_flight['number'],
+                        self.flightview_date
+                    )
+            except Exception as e:
+                print(f"Error getting flight info: {str(e)}")
+                return {'display_time': '----', 'console_msg': None, 'sta': None, 'ata': None, 'std': None, 'atd': None}
 
-            # If not found on either date
-            print(f"Flight {a_flight['airline']}{a_flight['number']} not found on FlightView for {self.flightview_date} or yesterday.")
-            return self.search_result
-            
+            # Process flight info for current date
+            result = self._process_flight_info(flight_info, self.flightview_date, use_flightview)
+            if result['display_time'] != '----':
+                return result
+
+            # Try yesterday's date if no result
+            try:
+                yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                if use_flightview:
+                    flight_info = self.flightview_crawler.get_flight_info(
+                        a_flight['airline'],
+                        a_flight['number'],
+                        yesterday,
+                        arrapt=a_flight.get('arrapt'),
+                        depapt=a_flight.get('depapt')
+                    )
+                else:
+                    flight_info = self.flightstats_crawler.get_flight_info(
+                        a_flight['airline'],
+                        a_flight['number'],
+                        yesterday
+                    )
+                result = self._process_flight_info(flight_info, yesterday, use_flightview)
+                return result
+            except Exception as e:
+                print(f"Error getting yesterday's flight info: {str(e)}")
+                return {'display_time': '----', 'console_msg': None, 'sta': None, 'ata': None, 'std': None, 'atd': None}
+
         except Exception as e:
-            print(f"FlightView search error for {a_flight['airline']}{a_flight['number']}: {str(e)}")
-            return self.search_result
+            print(f"Error in search with provider: {str(e)}")
+            return {'display_time': '----', 'console_msg': None, 'sta': None, 'ata': None, 'std': None, 'atd': None}
 
-    def _try_date_search(self, a_flight:dict, search_date:str, arrival_airport:str, depapt=None):
-        """Helper function to search flight with specific date, arrival, and optional departure airport"""
-        try:
-            flight_info = self.flightview_crawler.get_flight_info(
-                a_flight['airline'],
-                a_flight['number'],
-                search_date,
-                arrapt=arrival_airport, # Pass required arrival airport
-                depapt=depapt          # Pass departure if available
-            )
+    def _process_flight_info(self, flight_info, date_str:str, use_flightview:bool):
+        """Process flight info from either provider and return standardized result"""
+        result = {
+            'display_time': '----',  # Default display time
+            'console_msg': None,     # Console message for UI label
+            'sta': None,             # Keep original times for comparison
+            'ata': None,
+            'std': None,
+            'atd': None,
+            'is_another_day': 0      # -1 for yesterday, +1 for tomorrow
+        }
+        
+        if not flight_info:
+            result['console_msg'] = "No flight information available"
+            return result
             
-            # Reset result for this specific date attempt
-            current_search_result = {'ata': None, 'sta': None, 'snippet': None, 'is_yesterday': False}
+        # Store status message if available
+        if use_flightview and flight_info.get('status'):
+            result['console_msg'] = flight_info.get('status')
             
-            if flight_info and flight_info.get('arrival'):
-                arr_info = flight_info['arrival']
-                current_search_result['snippet'] = flight_info.get('status')
+        # Process arrival times
+        if flight_info.get('arrival'):
+            arr_info = flight_info['arrival']
+            
+            sta = arr_info.get('scheduled')
+            if sta and sta != "N/A":
+                result['sta'] = self.split_for_datetime(sta, 0 if use_flightview else 1, date_str)
+                print(f"STA parsed: {result['sta']}")  # Debug log
                 
-                get_sta = arr_info.get('scheduled')
-                if get_sta and get_sta != "N/A":
-                    current_search_result['sta'] = self.split_for_datetime(get_sta, 0, search_date)
+            ata = arr_info.get('actual')
+            if not ata or ata == "N/A":
+                ata = arr_info.get('estimated')
+            if ata and ata != "N/A":
+                result['ata'] = self.split_for_datetime(ata, 0 if use_flightview else 1, date_str)
+                print(f"ATA parsed: {result['ata']}")  # Debug log
                 
-                get_ata = arr_info.get('actual')
-                if not get_ata or get_ata == "N/A":
-                    get_ata = arr_info.get('estimated')
-                    
-                if get_ata and get_ata != "N/A":
-                     current_search_result['ata'] = self.split_for_datetime(get_ata, 0, search_date)
-                     
-                # If we found at least STA or ATA, update the main search result and return it
-                if current_search_result['sta'] or current_search_result['ata']:
-                    self.search_result.update(current_search_result) # Update the instance result
-                    return self.search_result
-                    
-            return None
+        # Process departure times
+        if flight_info.get('departure'):
+            dep_info = flight_info['departure']
             
-        except Exception as e:
-            print(f"FlightView date search error for {a_flight['airline']}{a_flight['number']} on {search_date}: {str(e)}")
-            return None
+            std = dep_info.get('scheduled')
+            if std and std != "N/A":
+                result['std'] = self.split_for_datetime(std, 0 if use_flightview else 1, date_str)
+                print(f"STD parsed: {result['std']}")  # Debug log
+                
+            atd = dep_info.get('actual')
+            if not atd or atd == "N/A":
+                atd = dep_info.get('estimated')
+            if atd and atd != "N/A":
+                result['atd'] = self.split_for_datetime(atd, 0 if use_flightview else 1, date_str)
+                print(f"ATD parsed: {result['atd']}")  # Debug log
+        
+        # Format display time based on list type
+        if self.list_type == 'arrival':
+            if result['ata']:
+                base_time = self._to_output_display_time(result['ata'])
+                # Add 'd' prefix if delayed
+                if result['sta'] and result['ata'] > result['sta']:
+                    print(f"Flight is delayed: ATA {result['ata']} > STA {result['sta']}")
+                    base_time = 'd' + base_time
+                # Get alternative day info
+                if result['sta']:
+                    base_date = datetime.strptime(date_str, "%Y%m%d").date()
+                    sta_date = result['sta'].date()
+                    if sta_date < base_date:
+                        result['is_another_day'] = -1
+                        base_time += '-'
+                    elif sta_date > base_date:
+                        result['is_another_day'] = 1
+                        base_time += '+'
+                result['display_time'] = base_time
+        else:  # departure
+            if result['atd']:
+                base_time = self._to_output_display_time(result['atd'])
+                # Add 'd' prefix if delayed
+                if result['std'] and result['atd'] > result['std']:
+                    print(f"Flight is delayed: ATD {result['atd']} > STD {result['std']}")
+                    base_time = 'd' + base_time
+                # Get alternative day info
+                if result['std']:
+                    base_date = datetime.strptime(date_str, "%Y%m%d").date()
+                    std_date = result['std'].date()
+                    if std_date < base_date:
+                        result['is_another_day'] = -1
+                        base_time += '-'
+                    elif std_date > base_date:
+                        result['is_another_day'] = 1
+                        base_time += '+'
+                result['display_time'] = base_time
+            elif result['std']:
+                base_time = self._to_output_display_time(result['std']) + '*'
+                # Get alternative day info for STD
+                base_date = datetime.strptime(date_str, "%Y%m%d").date()
+                std_date = result['std'].date()
+                if std_date < base_date:
+                    result['is_another_day'] = -1
+                    base_time += '-'
+                elif std_date > base_date:
+                    result['is_another_day'] = 1
+                    base_time += '+'
+                result['display_time'] = base_time
+                
+        return result
+
+    def _to_output_display_time(self, dt):
+        """Format datetime into display string"""
+        if not dt:
+            return '----'
+        return dt.strftime("%H%M")
 
     # Param ViewOrStats notifies which format of the original string.
     # 0: 12:34AM,DEC11 from FlightView
@@ -260,114 +357,3 @@ class FlightScraper:
         except Exception as e:
              print(f"Error parsing datetime string '{OrigStr}' with format {ViewOrStats} for date {base_date_str}: {e}")
              return None
-
-    # Search flight using FlightStats.
-    # Return a dictionary with the standardized search_result structure.
-    def flightstats_search(self, a_flight:dict):
-        """Search flight using FlightStats"""
-        self._reset_search_result()
-        
-        if not self.flightview_date:
-             print("Flight date not set. Cannot search FlightStats.")
-             return self.search_result
-
-        # FlightStats search doesn't use depapt in its current implementation
-        # query_depapt = a_flight.get('depapt') 
-
-        try:
-            # Try current date first
-            flight_info = self.flightstats_crawler.get_flight_info(
-                a_flight['airline'],
-                a_flight['number'],
-                self.flightview_date
-                # depapt=query_depapt # Removed - not accepted by flightstats_crawler
-            )
-            
-            if self._process_flightstats_info(flight_info, self.flightview_date):
-                return self.search_result
-            
-            # Try yesterday's date if no result
-            print(f"Flight {a_flight['airline']}{a_flight['number']} not found for {self.flightview_date} on FlightStats, trying yesterday...")
-            yesterday = (datetime.strptime(self.flightview_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-            yesterday_info = self.flightstats_crawler.get_flight_info(
-                a_flight['airline'],
-                a_flight['number'],
-                yesterday
-                # depapt=query_depapt # Removed - not accepted by flightstats_crawler
-            )
-            
-            if self._process_flightstats_info(yesterday_info, yesterday):
-                self.search_result['is_yesterday'] = True
-                return self.search_result
-            
-            print(f"Flight {a_flight['airline']}{a_flight['number']} not found on FlightStats for {self.flightview_date} or yesterday.")
-            return self.search_result
-            
-        except Exception as e:
-            print(f"FlightStats search error for {a_flight['airline']}{a_flight['number']}: {str(e)}")
-            return self.search_result
-
-    def _process_flightstats_info(self, flight_info, date_str):
-        """Helper to process flight stats info and populate search_result"""
-        if flight_info:
-            # FlightStats doesn't reliably provide status, so we don't store snippet from it
-            # self.search_result['snippet'] = flight_info.get('status') 
-            
-            arr_info = flight_info.get('arrival', {})
-            
-            sta = arr_info.get('scheduled')
-            if sta and sta != 'N/A':
-                self.search_result['sta'] = self.split_for_datetime(sta, 1, date_str)
-            
-            ata = arr_info.get('actual')
-            if not ata or ata == 'N/A':
-                ata = arr_info.get('estimated') # Fallback to estimated
-            
-            if ata and ata != 'N/A':
-                self.search_result['ata'] = self.split_for_datetime(ata, 1, date_str)
-            
-            # Return True if we found either time
-            if self.search_result['sta'] or self.search_result['ata']:
-                return True
-        return False
-        
-    def _reset_search_result(self):
-        """Resets the search result structure"""
-        self.search_result = {
-            'ata': None, 
-            'sta': None, 
-            'snippet': None, 
-            'is_yesterday': False
-        }
-
-    # Return search_result.
-    def search_flight_info(self, a_flight:dict):
-        """Main search function trying FlightView first, then FlightStats"""
-        self._reset_search_result()
-        
-        # Try FlightView first
-        print(f"Searching FlightView for {a_flight['airline']}{a_flight['number']}...")
-        view_result = self.flightview_search(a_flight)
-        # Check if view_result is not None and has valid times
-        if view_result and (view_result.get('sta') or view_result.get('ata')):
-             print(f"Found result on FlightView.")
-             return view_result
-
-        # Fallback to FlightStats
-        print(f"No definitive result on FlightView, falling back to FlightStats for {a_flight['airline']}{a_flight['number']}...")
-        stats_result = self.flightstats_search(a_flight)
-        # Check if stats_result is not None and has valid times
-        if stats_result and (stats_result.get('sta') or stats_result.get('ata')):
-             print(f"Found result on FlightStats.")
-             return stats_result
-            
-        # If no results found from either
-        print(f"No information found for {a_flight['airline']}{a_flight['number']} on either service.")
-        return self.search_result # Return empty (reset) result
-
-    # This method seems unused and might be deprecated/incorrect
-    # def set_4digit_time(self, time_str):
-    #     """Return a datetime object with the current flight date and 24 hour time"""
-    #     from datetime import datetime
-    #     time_24_plus_date = time_str[:2]+':'+time_str[2:] + ',' + self.flightview_date
-    #     return datetime.strptime(time_24_plus_date, '%H:%M,%Y%m%d') if time_24_plus_date else None
