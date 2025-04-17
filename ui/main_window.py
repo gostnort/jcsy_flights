@@ -9,18 +9,23 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QRadioButton,
     QButtonGroup,
-    QSplitter
+    QSplitter,
+    QProgressBar
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from flight_scraper import FlightScraper
 from flights_dispatch import FlightProcessor
 
 class MainWindow(QMainWindow):
+    # Signal to update UI from worker threads
+    update_status_signal = Signal(str)
+    processing_complete_signal = Signal()
+    
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("JCSY Time Checker 0.31")
+        self.setWindowTitle("JCSY Time Checker 0.41 (Multi-threaded)")
         self.setMinimumSize(610, 480) # Adjusted min height after removing time labels
         
         central_widget = QWidget()
@@ -71,6 +76,14 @@ class MainWindow(QMainWindow):
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        scroll_layout.addWidget(self.progress_bar)
+        
         self.current_flight_label = QLabel("Status messages will appear here...")
         self.current_flight_label.setWordWrap(True)
         self.current_flight_label.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -125,6 +138,25 @@ class MainWindow(QMainWindow):
         
         self.print_button.setEnabled(False)
         
+        # Connect signals
+        self.update_status_signal.connect(self.update_status)
+        self.processing_complete_signal.connect(self.show_final_results)
+        
+        # Processing state
+        self.total_flights = 0
+        self.processed_flights = 0
+        
+    @Slot(str)
+    def update_status(self, message):
+        """Update status label with new message"""
+        self.current_flight_label.setText(message + "\n" + self.current_flight_label.text())
+        
+    def update_progress(self):
+        """Update progress bar based on processing state"""
+        if self.total_flights > 0:
+            progress = int((self.processed_flights / self.total_flights) * 100)
+            self.progress_bar.setValue(progress)
+        
     def cleanup_app_resources(self):
         """Safely cleans up resources like the flight processor."""
         print("MainWindow cleanup_app_resources called...") # For debugging
@@ -141,8 +173,10 @@ class MainWindow(QMainWindow):
                 self.input_text.setText(result)
                 self.print_button.setEnabled(True)
             else:
-                 self.current_flight_label.setText("Processing finished, but no results generated.")
+                self.current_flight_label.setText("Processing finished, but no results generated.")
+        
         self.search_button.setEnabled(True) # Re-enable search button
+        self.progress_bar.setVisible(False) # Hide progress bar
         
     def print_results(self):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
@@ -165,48 +199,61 @@ class MainWindow(QMainWindow):
             self.flight_scraper = FlightScraper(list_type=list_type, home_airport=home_airport)
             self.flight_processor = FlightProcessor(self)
             
-            self.current_flight_label.setText("Starting processing...")
+            # Connect processor signals
+            self.register_processor_connections()
+            
+            self.current_flight_label.setText("Starting multi-threaded processing...")
             self.print_button.setEnabled(False)
             self.search_button.setEnabled(False)
+            
+            # Show and reset progress bar
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(True)
             
             if not self.flight_processor.start_processing(text):
                 self.current_flight_label.setText("Error: Could not initialize processing. Check JCSY format.")
                 self.search_button.setEnabled(True)
+                self.progress_bar.setVisible(False)
                 return
                 
             if not self.flight_scraper.flightview_date:
-                 self.current_flight_label.setText("Error: Failed to parse date from JCSY line.")
-                 self.search_button.setEnabled(True)
-                 return
-
-            self.process_next_flight_in_queue()
+                self.current_flight_label.setText("Error: Failed to parse date from JCSY line.")
+                self.search_button.setEnabled(True)
+                self.progress_bar.setVisible(False)
+                return
+                
+            # Store total flights for progress tracking
+            self.total_flights = self.flight_processor.initial_flight_count
+            self.processed_flights = 0
+            self.update_progress()
             
         except Exception as e:
             self.current_flight_label.setText(f"Error during setup: {str(e)}")
             self.search_button.setEnabled(True)
-
-    def handle_search_error(self, error_message):
-        """Handle search error - Log, keep original line, move to next"""
-        if self.flight_processor and self.flight_processor.current_flight:
-            flight = self.flight_processor.current_flight
-            print(f"Error processing flight {flight['airline']}{flight['number']}: {error_message}")
-            self.current_flight_label.setText(
-                f"Error on {flight['airline']}{flight['number']}: {error_message}\n" 
-                f"Keeping original line: {flight['line']}\n{'-'*50}\n" +
-                self.current_flight_label.text()
-            )
-            self.flight_processor.finalize_flight_result(flight, None, error=True)
-            self.process_next_flight_in_queue()
-        else:
-            self.current_flight_label.setText(f"An unexpected error occurred: {error_message}")
-            self.handle_search_complete() 
-
-    def handle_search_complete(self):
-        """Called when a single worker finishes (successfully or with error)"""
-        # This is now less important as we trigger next flight directly
-        # but good for cleanup if needed in future.
-        if self.flight_processor and self.flight_processor.search_worker:
-            self.flight_processor.cleanup_worker() 
+            self.progress_bar.setVisible(False)
+    
+    def register_processor_connections(self):
+        """Connect signals from flight processor to UI updates"""
+        # We'll need to modify the FlightProcessor to emit signals for these events
+        
+        # Track flight processing state changes
+        for flight in self.flight_processor.flights_to_process:
+            flight_id = f"{flight['airline']}{flight['number']}"
+            self.update_status_signal.emit(f"Queued flight: {flight_id} ({flight['depapt']} -> {flight['arrapt']})")
+            
+    def handle_flight_started(self, flight):
+        """Handle when a flight search is started"""
+        flight_id = f"{flight['airline']}{flight['number']}"
+        self.update_status_signal.emit(f"Processing: {flight_id} ({flight['depapt']} -> {flight['arrapt']})")
+        
+    def handle_flight_completed(self, flight, status):
+        """Handle when a flight search is completed"""
+        flight_id = f"{flight['airline']}{flight['number']}"
+        self.update_status_signal.emit(f"Completed: {flight_id} - Status: {status}")
+        
+        # Update progress tracking
+        self.processed_flights += 1
+        self.update_progress()
 
     def resizeEvent(self, event):
         """Handle window resize events to adjust font sizes"""
@@ -230,50 +277,3 @@ class MainWindow(QMainWindow):
         if self.flight_processor:
             self.flight_processor.cleanup()
         super().closeEvent(event)
-
-    def process_next_flight_in_queue(self):
-        """Gets the next flight from the processor and starts its worker"""
-        if not self.flight_processor:
-             return 
-             
-        process_info = self.flight_processor.process_next_flight()
-        
-        if not process_info:
-            self.show_final_results()
-            return
-
-        self.current_flight_label.setText(
-            f"Processing flight {process_info['current']} of {process_info['total']}: "
-            f"{process_info['flight']['airline']}{process_info['flight']['number']} "
-            f"({process_info['flight']['depapt']} -> {process_info['flight']['arrapt']})\n"
-            f"Original: {process_info['flight']['line']}\n{'-'*50}\n" +
-            self.current_flight_label.text()
-        )
-        
-        self.input_text.setText('\n'.join(self.flight_processor.processed_lines))
-        QTimer.singleShot(0, lambda: self.input_text.verticalScrollBar().setValue(self.input_text.verticalScrollBar().maximum()))
-        
-        worker = process_info['worker']
-        worker.result_ready.connect(self.handle_search_result)
-        worker.error_occurred.connect(self.handle_search_error)
-        worker.start()
-
-    def handle_search_result(self, result):
-        """Handle search result - update line automatically"""
-        if not self.flight_processor or not self.flight_processor.current_flight:
-            return
-            
-        flight = self.flight_processor.current_flight
-        
-        # Let processor finalize the result (update line, state)
-        self.flight_processor.finalize_flight_result(flight, result)
-        
-        # Show status briefly
-        sta = result.get('sta')
-        ata = result.get('ata')
-        is_yesterday = result.get('is_yesterday', False)
-        status_msg = f"Updated: {flight['airline']}{flight['number']}" if (sta or ata) else f"No time found: {flight['airline']}{flight['number']}"
-        if is_yesterday: status_msg += " (Yesterday)"
-        self.current_flight_label.setText(f"{status_msg}\n{'-'*50}\n" + self.current_flight_label.text())
-        
-        QTimer.singleShot(100, self.process_next_flight_in_queue)

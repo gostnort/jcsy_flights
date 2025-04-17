@@ -1,46 +1,64 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, QThreadPool, QRunnable, QObject, Slot
 from datetime import datetime
 
-class SearchWorker(QThread):
-    """Worker thread for flight searches"""
-    result_ready = Signal(dict)  # Just pass the result data
-    search_complete = Signal()
-    error_occurred = Signal(str)  # Just pass the error message
+class WorkerSignals(QObject):
+    """Signals for worker thread communication"""
+    result_ready = Signal(dict)  # Pass the result data
+    error_occurred = Signal(str)  # Pass the error message
+    finished = Signal()  # Signal when worker is done
 
+class SearchWorker(QRunnable):
+    """Worker runnable for flight searches"""
     def __init__(self, flight_scraper, flight):
         super().__init__()
         self.flight_scraper = flight_scraper
         self.flight = flight  # flight is now a dict with airline, number, depapt, line, row
+        self.signals = WorkerSignals()
         self.is_running = True
 
+    @Slot()
     def run(self):
         if not self.is_running:
+            self.signals.finished.emit()
             return
                 
         try:
             result = self.flight_scraper.search_flight_info(self.flight)
             # Always emit result, even if empty, handle logic in main thread
-            self.result_ready.emit(result)
+            self.signals.result_ready.emit(result)
         except Exception as e:
             print(f"SearchWorker error: {e}") # Log error
-            self.error_occurred.emit(str(e))
-        # Removed search_complete emit, handled by result/error signals
+            self.signals.error_occurred.emit(str(e))
+        finally:
+            self.signals.finished.emit()
 
     def stop(self):
         self.is_running = False
 
 
-class FlightProcessor:
+class FlightProcessorSignals(QObject):
+    """Signals for FlightProcessor to communicate with UI"""
+    flight_started = Signal(dict)  # Pass flight info when processing starts
+    flight_completed = Signal(dict, str)  # Pass flight info and status when processing completes
+    all_flights_completed = Signal()  # Signal when all flights are processed
+    status_update = Signal(str)  # General status updates
+
+
+class FlightProcessor(QObject):
     def __init__(self, main_window):
+        super().__init__()
         # UI reference
         self.main_window = main_window
         
+        # Signals
+        self.signals = FlightProcessorSignals()
+        
         # Worker thread management
-        self.search_worker = None
-        self.is_processing = False
+        self.thread_pool = QThreadPool()
+        self.thread_pool.setMaxThreadCount(5)  # Limit to 5 threads
+        self.active_workers = {}  # Track active workers by flight row
         
         # Current flight processing state
-        self.current_flight = None
         self.flights_to_process = []
         
         # Text processing
@@ -54,14 +72,32 @@ class FlightProcessor:
         # Track processing state for each flight
         self.processing_states = {}
         self.initial_flight_count = 0 # Store initial total
+        
+        # Processing flag
+        self.is_processing = False
+        
+        # Connect signals to main window if possible
+        if hasattr(main_window, 'update_status_signal'):
+            self.signals.status_update.connect(main_window.update_status_signal.emit)
+        if hasattr(main_window, 'handle_flight_started'):
+            self.signals.flight_started.connect(main_window.handle_flight_started)
+        if hasattr(main_window, 'handle_flight_completed'):
+            self.signals.flight_completed.connect(main_window.handle_flight_completed)
+        if hasattr(main_window, 'processing_complete_signal'):
+            self.signals.all_flights_completed.connect(main_window.processing_complete_signal.emit)
 
-    def cleanup_worker(self):
+    def cleanup_workers(self):
         """Centralized worker cleanup"""
-        if self.search_worker:
-            self.search_worker.stop()
-            self.search_worker.wait() # Wait for thread to finish
-            self.search_worker.deleteLater() # Schedule for deletion
-            self.search_worker = None
+        # Stop all active workers
+        for worker in self.active_workers.values():
+            if hasattr(worker, 'stop'):
+                worker.stop()
+        
+        # Clear the worker dictionary
+        self.active_workers.clear()
+        
+        # Wait for all threads to finish
+        self.thread_pool.waitForDone()
 
     def start_processing(self, text):
         if self.is_processing:
@@ -89,7 +125,13 @@ class FlightProcessor:
             self.processed_lines = self.current_lines.copy() # Start with original
             self.processing_states = {flight['row']: 'pending' for flight in self.flights_to_process}
             self.is_processing = True
+            
+            self.signals.status_update.emit(f"Processing started for {self.initial_flight_count} flights.")
             print(f"Processing started for {self.initial_flight_count} flights.") # Use initial count
+            
+            # Start processing all flights in parallel (up to max thread count)
+            self.process_flights()
+            
             return True
             
         except Exception as e:
@@ -97,28 +139,78 @@ class FlightProcessor:
             self.is_processing = False # Ensure state is reset
             return False
 
-    def process_next_flight(self):
-        """Fetches the next flight and prepares the worker, returns info or None"""
-        if not self.is_processing or not self.flights_to_process:
-            self.is_processing = False
-            return None
+    def process_flights(self):
+        """Process flights in parallel up to the maximum thread count"""
+        # Calculate how many new workers we can start
+        active_count = len(self.active_workers)
+        max_new_workers = min(
+            self.thread_pool.maxThreadCount() - active_count,
+            len([f for f in self.flights_to_process if self.processing_states.get(f['row']) == 'pending'])
+        )
+        
+        # Start new workers up to the limit
+        for _ in range(max_new_workers):
+            # Find the next pending flight
+            next_flight = None
+            for flight in self.flights_to_process:
+                if self.processing_states.get(flight['row']) == 'pending':
+                    next_flight = flight
+                    break
+                    
+            if not next_flight:
+                break  # No more pending flights
+                
+            # Mark as processing
+            self.update_flight_state(next_flight['row'], 'processing')
+            
+            # Create and start worker
+            worker = SearchWorker(self.main_window.flight_scraper, next_flight)
+            
+            # Connect signals
+            worker.signals.result_ready.connect(lambda result, flight=next_flight: self.handle_result(flight, result))
+            worker.signals.error_occurred.connect(lambda error, flight=next_flight: self.handle_error(flight, error))
+            worker.signals.finished.connect(lambda flight=next_flight: self.handle_worker_finished(flight))
+            
+            # Store worker reference
+            self.active_workers[next_flight['row']] = worker
+            
+            # Start the worker
+            self.thread_pool.start(worker)
+            
+            # Emit signal that flight processing started
+            self.signals.flight_started.emit(next_flight)
+            
+            print(f"Started processing flight {next_flight['airline']}{next_flight['number']} (Row: {next_flight['row']})")
 
-        self.cleanup_worker() 
+    def handle_result(self, flight, result):
+        """Handle successful flight search result"""
+        self.finalize_flight_result(flight, result)
         
-        self.current_flight = self.flights_to_process[0] 
-        # Calculate current number based on states
-        processed_count = sum(1 for state in self.processing_states.values() if state not in ['pending', 'processing'])
-        current_num = processed_count + 1
+    def handle_error(self, flight, error):
+        """Handle error in flight search"""
+        error_msg = f"Error processing flight {flight['airline']}{flight['number']}: {error}"
+        self.signals.status_update.emit(error_msg)
+        print(error_msg)
+        self.finalize_flight_result(flight, None, error=True)
         
-        self.update_flight_state(self.current_flight['row'], 'processing')
+    def handle_worker_finished(self, flight):
+        """Handle worker completion and potentially start new workers"""
+        # Remove from active workers
+        row = flight['row']
+        if row in self.active_workers:
+            del self.active_workers[row]
+            
+        # Process next flights if any pending
+        if any(self.processing_states.get(f['row']) == 'pending' for f in self.flights_to_process):
+            self.process_flights()
         
-        self.search_worker = SearchWorker(self.main_window.flight_scraper, self.current_flight)
-        return {
-            'worker': self.search_worker,
-            'current': current_num, 
-            'total': self.initial_flight_count, # Use stored initial total
-            'flight': self.current_flight
-        }
+        # Check if all processing is complete
+        if not self.active_workers and not any(self.processing_states.get(f['row']) == 'pending' for f in self.flights_to_process):
+            self.is_processing = False
+            completion_msg = "All flights processed."
+            self.signals.status_update.emit(completion_msg)
+            print(completion_msg)
+            self.signals.all_flights_completed.emit()
         
     def update_flight_state(self, row, state):
         """Update the state of a flight in processing_states"""
@@ -131,7 +223,8 @@ class FlightProcessor:
         if row_index < 0 or row_index >= len(self.processed_lines):
              print(f"Error: Invalid row index {row_index} for flight {flight['airline']}{flight['number']}")
              return # Skip update if index is bad
-             
+        
+        status = "error"
         if error:
             self.update_flight_state(flight['row'], 'error')
             # Keep original line on error
@@ -164,27 +257,28 @@ class FlightProcessor:
                              
                      self.processed_lines[row_index] = new_line
                      self.update_flight_state(flight['row'], 'updated')
+                     status = "updated"
                      print(f"Updated line for flight {flight['airline']}{flight['number']}: {new_line}")
                 else:
                      print(f"Could not format line for flight {flight['airline']}{flight['number']} - keeping original.")
                      self.processed_lines[row_index] = flight['line']
                      self.update_flight_state(flight['row'], 'format_error')
+                     status = "format_error"
             else:
                  # No valid time found, keep original
                  self.processed_lines[row_index] = flight['line']
                  self.update_flight_state(flight['row'], 'no_time_found')
+                 status = "no_time_found"
                  print(f"No valid time found for flight {flight['airline']}{flight['number']} - keeping original.")
         else:
             # No result or no time in result, keep original
             self.processed_lines[row_index] = flight['line']
             self.update_flight_state(flight['row'], 'no_result')
+            status = "no_result"
             print(f"No result for flight {flight['airline']}{flight['number']} - keeping original.")
             
-        # Remove the processed flight from the queue
-        if self.flights_to_process and self.flights_to_process[0]['row'] == flight['row']:
-            self.flights_to_process.pop(0)
-        else:
-             print(f"Warning: Processed flight {flight['row']} was not at the front of the queue.")
+        # Emit signal that flight processing is completed with status
+        self.signals.flight_completed.emit(flight, status)
 
     def get_final_results(self):
         """Return the final processed text with all lines in original order"""
@@ -192,9 +286,8 @@ class FlightProcessor:
 
     def cleanup(self):
         """Full cleanup when closing"""
-        self.cleanup_worker()
+        self.cleanup_workers()
         self.is_processing = False
-        self.current_flight = None
         self.current_sta = None
         self.current_ata = None
         self.processing_states = {}
