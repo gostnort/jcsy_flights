@@ -28,7 +28,6 @@ class FlightStatsScraper:
         :param airline: Airline code (e.g., 'AA')
         :param number: Flight number (e.g., '123')
         :param date_str: Date string in format YYYYMMDD
-        :param depapt: Departure airport (optional)
         :return: Dictionary with flight details or None if not found
         """
         try:
@@ -47,7 +46,7 @@ class FlightStatsScraper:
                 date=str(day).zfill(2)
             )
             
-            print(f"Fetching data from: {url}")
+            print(f"FlightStats URL: {url}")
             
             # Make the request with headers
             response = requests.get(url, headers=self.headers)
@@ -56,7 +55,17 @@ class FlightStatsScraper:
                 return None
             
             # Parse the HTML
-            return self._parse_flight_data(html_content=response.text)
+            flight_data = self._parse_flight_data(html_content=response.text)
+            
+            # Add flight status based on available data
+            if flight_data:
+                # Determine flight status based on available times
+                flight_data = self._add_flight_status(flight_data)
+                
+                # Store the original search date
+                flight_data['search_date'] = date_str
+            
+            return flight_data
             
         except Exception as e:
             print(f"Error getting flight info: {str(e)}")
@@ -79,15 +88,25 @@ class FlightStatsScraper:
                     'scheduled': 'N/A',
                     'actual': 'N/A',
                     'estimated': 'N/A',
-                    'airport': 'N/A'
+                    'airport': 'N/A',
+                    'status': 'Unknown'
                 },
                 'arrival': {
                     'scheduled': 'N/A',
                     'actual': 'N/A',
                     'estimated': 'N/A',
-                    'airport': 'N/A'
+                    'airport': 'N/A',
+                    'status': 'Unknown'
                 }
             }
+            
+            # Try to get the flight status
+            status_div = soup.find('div', class_=lambda c: c and (c.startswith('status__StatusContainer-') or c.startswith('status__Status-')))
+            if status_div:
+                status_text = status_div.text.strip()
+                # Store status in both departure and arrival for now
+                result['departure']['status'] = status_text
+                result['arrival']['status'] = status_text
             
             # Find the main ticket card sections
             ticket_cards = soup.find_all('div', class_=lambda c: c and c.startswith('ticket__TicketCard-'))
@@ -151,31 +170,41 @@ class FlightStatsScraper:
         except Exception as e:
             print(f"Error parsing flight data: {str(e)}")
             return None
-
-# Main section for testing
-if __name__ == "__main__":
-    # Create a scraper instance
-    scraper = FlightStatsScraper()
-    
-    # Test with DL 0899
-    flight_info = scraper.get_flight_info("DL", "0899", "20250416")
-    
-    if flight_info:
-        print("\nFinal Flight Information:")
-        print("-" * 40)
+            
+    def _add_flight_status(self, flight_data):
+        """
+        Add derived flight status based on available time data
         
-        print("\nDeparture:")
-        dep_info = flight_info['departure']
-        print(f"  Airport: {dep_info['airport']}")
-        print(f"  Scheduled: {dep_info['scheduled']}")
-        print(f"  Actual: {dep_info['actual']}")
-        print(f"  Estimated: {dep_info['estimated']}")
-        
-        print("\nArrival:")
-        arr_info = flight_info['arrival']
-        print(f"  Airport: {arr_info['airport']}")
-        print(f"  Scheduled: {arr_info['scheduled']}")
-        print(f"  Actual: {arr_info['actual']}")
-        print(f"  Estimated: {arr_info['estimated']}")
-    else:
-        print("Failed to retrieve flight information") 
+        :param flight_data: Dictionary with parsed flight data
+        :return: Updated flight data dictionary with status
+        """
+        try:
+            # Check if we already have a status
+            if 'departure' in flight_data and 'status' in flight_data['departure'] and flight_data['departure']['status'] != 'Unknown':
+                return flight_data
+                
+            # Determine status based on available times
+            departure_status = 'Scheduled'
+            arrival_status = 'Scheduled'
+            
+            # Departure status
+            if flight_data['departure']['actual'] != 'N/A':
+                departure_status = 'Departed'
+            elif flight_data['departure']['estimated'] != 'N/A':
+                departure_status = 'Estimated'
+                
+            # Arrival status
+            if flight_data['arrival']['actual'] != 'N/A':
+                arrival_status = 'Arrived'
+            elif flight_data['arrival']['estimated'] != 'N/A':
+                arrival_status = 'Expected'
+                
+            # Update the statuses
+            flight_data['departure']['status'] = departure_status
+            flight_data['arrival']['status'] = arrival_status
+            
+            return flight_data
+            
+        except Exception as e:
+            print(f"Error adding flight status: {str(e)}")
+            return flight_data 

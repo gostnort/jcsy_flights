@@ -1,6 +1,11 @@
 import sys
+import os
+
+# Add the src directory to the path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from PySide6.QtWidgets import QApplication
-from ui.main_window import MainWindow
+from src.ui.main_window import MainWindow
 
 def main():
     app = QApplication(sys.argv)

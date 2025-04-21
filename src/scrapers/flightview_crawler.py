@@ -28,27 +28,48 @@ class FlightViewScraper:
             print(f"Extraction error for {label}: {str(e)}")
             return "N/A"
 
-    def get_flight_info(self, airline, flight_number, date, arrapt, depapt=None):
+    def get_flight_info(self, airline, flight_number, date, is_arrival=True, depapt=None, arrapt="LAX"):
         """
         Get flight information from FlightView
         Args:
             airline: Airline code (e.g., 'CA')
             flight_number: Flight number without leading zeros (e.g., '984')
             date: Flight date in YYYYMMDD format
+            is_arrival: Whether this is an arrival (True) or departure (False)
+            depapt: Optional departure airport code (for specific search)
             arrapt: Arrival airport code, defaults to 'LAX'
-            depapt: Optional departure airport code
         """
         try:
-            # Construct URL based on whether depapt is provided
-            if depapt:
-                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}"
-            else:
+            # Construct URL based on whether depapt is provided and flight direction
+            if depapt and not is_arrival:
+                # Departure flight with specific departure airport
+                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}&arrapt={arrapt}"
+            elif depapt and is_arrival:
+                # Arrival flight with specific departure airport
+                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}&arrapt={arrapt}"
+            elif is_arrival:
+                # Generic arrival to arrapt
                 url = f"{self.base_url}/{airline}/{flight_number}?date={date}&arrapt={arrapt}"
-            print(url)    
+            else:
+                # Generic departure from arrapt
+                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={arrapt}"
+                
+            print(f"FlightView URL: {url}")
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract the flight date from the page (could be different from requested date)
+            flight_date_elem = soup.select_one('.fvDate')
+            flight_date = date  # Default to requested date
+            if flight_date_elem:
+                try:
+                    date_text = flight_date_elem.text.strip()
+                    date_obj = datetime.strptime(date_text, "%A, %B %d, %Y")
+                    flight_date = date_obj.strftime("%Y%m%d")
+                except Exception as e:
+                    print(f"Failed to parse flight date: {str(e)}")
             
             # Get status
             flight_status = soup.select_one('.flight-status')
@@ -74,17 +95,20 @@ class FlightViewScraper:
             
             return {
                 'status': status,
+                'date': flight_date,  # Include actual flight date
                 'departure': {
                     'scheduled': dep_scheduled,
                     'actual': dep_actual,
-                    'terminal_gate': dep_terminal
+                    'terminal_gate': dep_terminal,
+                    'status': status if not is_arrival else None
                 },
                 'arrival': {
                     'scheduled': arr_scheduled,
                     'actual': arr_actual,
-                    'estimated': arr_estimated,  # Added estimated time
+                    'estimated': arr_estimated,
                     'terminal_gate': arr_terminal,
-                    'baggage_claim': arr_baggage
+                    'baggage_claim': arr_baggage,
+                    'status': status if is_arrival else None
                 }
             }
 
@@ -93,19 +117,4 @@ class FlightViewScraper:
             return None
         except Exception as e:
             print(f"Error scraping flight info: {str(e)}")
-            return None
-
-# Example usage:
-if __name__ == "__main__":
-    scraper = FlightViewScraper()
-    # Test flight info with only arrival airport
-    flight_info = scraper.get_flight_info('CA', '984', '20241212')  # Uses default LAX
-    if flight_info:
-        print("With arrival airport only:", flight_info)
-    
-    # Test with both departure and arrival airports
-    flight_info = scraper.get_flight_info('CA', '984', '20241212', depapt='PEK')
-    if flight_info:
-        print("\nWith both airports:", flight_info)
-    else:
-        print("Failed to get flight information")
+            return None 
