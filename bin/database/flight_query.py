@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict, Any, Optional, Tuple
-from src.database.flight_db import FlightDatabase
+from bin.database.flight_db import FlightDatabase
 
 class FlightQuery:
     """Query operations for flight data in the database"""

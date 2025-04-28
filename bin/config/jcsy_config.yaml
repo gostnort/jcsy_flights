@@ -1,0 +1,161 @@
+# Simplified JCSY Config
+format_version: "1.0"
+
+# Simple pattern-based extraction with named capture groups
+header:
+  pattern: "^JCSY:(?P<header_airline>[A-Z]{2})(?P<header_flight_number>\\d+)/(?P<header_flight_date>\\d+[A-Z]{3})/(?P<header_airport>[A-Z]{3}),(?P<is_arrival>[I|O])"
+  transforms:
+    header_flight_date: parse_header_date
+    header_is_arrival: "lambda x: 1 if x == 'I' else 0"
+
+title_line:
+  pattern: "^FLT/"
+  # Just capture the BKD position for flight parsing
+  extract_positions:
+    bkd_position: "lambda line: line.find('BKD')"
+
+flight:
+  # Use the BKD position to divide the line
+  pattern: "^[A-Z]{2}\\d+"
+  pre_process: "lambda line, ctx: {'flight_info': line[:ctx['bkd_position']].strip(), 'counts': line[ctx['bkd_position']:].strip()}"
+  
+  # Simple position-based extraction for flight info
+  flight_info:
+    airline: [0, 2]
+    flight_number: [2, 6]
+    airport: [8, 11]
+    std_text: [12, -1]
+  
+  # Use fixed indices for counts after splitting by spaces
+  counts:
+    split: "\\s+"
+    fields:
+      # Define fields with simple index and transform
+      booked: 
+        index: 0
+        split: "/"
+        fields: [booked_count_non_economy, booked_count_economy]
+        transforms:
+          booked_count_non_economy: trim_leading_zeros
+          booked_count_economy: trim_leading_zeros
+      checked:
+        index: 1
+        split: "[/+]+"
+        fields: [checked_count_non_economy, checked_count_economy, check_count_infant]
+        transforms:
+          checked_count_non_economy: trim_leading_zeros
+          checked_count_economy: trim_leading_zeros
+          check_count_infant: trim_leading_zeros
+      bags:
+        index: 4
+        split: "/"
+        fields: [bags_count_piece, bags_count_weight]
+        transforms:
+          bags_count_piece: trim_leading_zeros
+          bags_count_weight: trim_leading_zeros
+
+# Special parsers for complex formats
+special_parsers:
+  parse_header_date:
+    description: 'Parse 17APR of CA0984/17APR/LAX,I into date object'
+    python: |
+      def parse_header_date(value):
+          import datetime
+          try:
+              if len(value) <= 5:  # Format like 17APR
+                  date_obj = datetime.datetime.strptime(value, '%d%b').date()
+                  date_obj = date_obj.replace(year=datetime.datetime.now().year)
+              else:  # Format like 17APR25
+                  date_obj = datetime.datetime.strptime(value, '%d%b%y').date()
+              return date_obj
+          except ValueError:
+              return None
+
+# Transforms that can be applied to fields
+transforms:
+  trim_leading_zeros:
+    description: "remove leading zeros"
+    python: "lambda x: x.lstrip('0') if x else x"
+
+  trim_spaces:
+    description: "remove leading and trailing spaces"
+    python: "lambda x: x.strip()" # returns empty string if x are spacers
+
+# Field types and their conversion functions
+types:
+  string:
+    python: "lambda x: x.strip()"
+  
+  integer:
+    python: "lambda x: int(x.strip()) if x.strip() else 0"
+  
+  date:
+    python: "lambda x, fmt: datetime.strptime(x, fmt).strftime('%Y%m%d')"
+  
+  boolean:
+    python: "lambda x, mapping: mapping.get(x, False)"
+  
+  special:
+    python: "lambda x, parser_name: special_parsers[parser_name](x)" 
+
+# Source of the content:
+# JCSY:CA0983/24APR/PEK,O                                                         
+# FLT/DEST/GTD   DEPT   BKD     CHK(NTC)   CHK(TC)    UCK     BAG                 
+# CM0306 /PTY/          000/001 000/001+00 000/000+00 000/000 002/0039                       
+# UA1843 /ORD/   2359   000/002 000/000+00 000/002+00 000/000 000/0000            
+# UA2733 /IAH/   0050+1 001/006 000/000+00 001/006+00 000/000 008/0140             
+
+# Expected output structure (shown in JSON format for clarity):
+# {
+#   "header": {
+#     "header_airline": "CA",
+#     "header_flight_number": "0983",
+#     "header_flight_date": "20250424",
+#     "header_airport": "PEK",
+#     "is_arrival": 0
+#   },
+#   "title_line": {
+#     "bkd_position": "22"
+#   },
+#   "flight": {
+#     "flight_0": {
+#       "airline": "CM",
+#       "flight_number": "0306",
+#       "airport": "PTY",
+#       "std_text": "",
+#       "booked_count_non_economy": "000",
+#       "booked_count_economy": "001",
+#       "checked_count_non_economy": "000",
+#       "checked_count_economy": "001",
+#       "check_count_infant": "000",
+#       "bags_count_piece": "002",
+#       "bags_count_weight": "0039"
+#     },
+#     "flight_1": {
+#       "airline": "UA",
+#       "flight_number": "1843",
+#       "airport": "ORD",
+#       "std_text": "2359",
+#       "booked_count_non_economy": "000",
+#       "booked_count_economy": "002",
+#       "checked_count_non_economy": "000",
+#       "checked_count_economy": "000",
+#       "check_count_infant": "000",
+#       "bags_count_piece": "000",
+#       "bags_count_weight": "0000"
+#     },
+#     "flight_2": {
+#       "airline": "UA",
+#       "flight_number": "2733",
+#       "airport": "IAH",
+#       "std_text": "0050+1",
+#       "booked_count_non_economy": "001",
+#       "booked_count_economy": "006",
+#       "checked_count_non_economy": "000",
+#       "checked_count_economy": "001",
+#       "check_count_infant": "006",
+#       "bags_count_piece": "008",
+#       "bags_count_weight": "0140"
+#     }
+#   }
+# }

@@ -29,4 +29,6 @@ build/
 Thumbs.db 
 
 *.db
-JCSY.txt
+JCSY*.txt
+test*.py
+src/database/
