@@ -3,10 +3,13 @@ import os
 
 
 class FlightDatabase:
-    def __init__(self):
+    def __init__(self, db_name: str = ""):
         # Store database in src/database directory
         src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.db_path = os.path.join(src_dir, "src", "database", "flights.db")
+        if db_name == "":
+            self.db_path = os.path.join(src_dir, "src", "database", "flights.db")
+        else:
+            self.db_path = os.path.join(src_dir, "src", "database", db_name)
         self.connection = None
         self.cursor = None
         if not os.path.exists(self.db_path):
@@ -52,9 +55,9 @@ class FlightDatabase:
     def initialize_database(self):
         """Create database tables if they don't exist"""
         with self:
-            # 1. JSCY header flight info table
+            # 1. JCSY header flight info table
             self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS jscy_flights (
+            CREATE TABLE IF NOT EXISTS jcsy_flights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 airline TEXT NOT NULL,
                 flight_number TEXT NOT NULL,
@@ -76,7 +79,7 @@ class FlightDatabase:
             self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS query_flights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                jscy_flight_id INTEGER NOT NULL,
+                jcsy_flight_id INTEGER NOT NULL,
                 airline TEXT NOT NULL,
                 flight_number TEXT NOT NULL,
                 flight_date DATE NOT NULL,
@@ -98,27 +101,27 @@ class FlightDatabase:
                 check_count_infant INTEGER,
                 bags_count_piece INTEGER,
                 bags_count_weight INTEGER,
-                FOREIGN KEY (jscy_flight_id) REFERENCES jscy_flights(id) ON DELETE CASCADE
+                FOREIGN KEY (jcsy_flight_id) REFERENCES jcsy_flights(id) ON DELETE CASCADE
             )
             ''')
             # Create indexes for faster queries
             self.cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_jscy_flights_date 
-            ON jscy_flights(flight_date)
+            CREATE INDEX IF NOT EXISTS idx_jcsy_flights_date 
+            ON jcsy_flights(flight_date)
             ''')
             self.cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_query_flights_jscy_id 
-            ON query_flights(jscy_flight_id)
+            CREATE INDEX IF NOT EXISTS idx_query_flights_jcsy_id 
+            ON query_flights(jcsy_flight_id)
             ''')
             # Create index on airline and flight_number for faster lookup
             self.cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_jscy_flights_number
-            ON jscy_flights(airline, flight_number)
+            CREATE INDEX IF NOT EXISTS idx_jcsy_flights_number
+            ON jcsy_flights(airline, flight_number)
             ''')
             # Create index on timestamps for sorting
             self.cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_jscy_flights_processed
-            ON jscy_flights(processed_at)
+            CREATE INDEX IF NOT EXISTS idx_jcsy_flights_processed
+            ON jcsy_flights(processed_at)
             ''')
             self.cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_query_flights_timestamp
@@ -136,7 +139,7 @@ class FlightDatabase:
             CREATE VIEW IF NOT EXISTS query_results AS
             SELECT 
                 qf.id,
-                qf.jscy_flight_id,
+                qf.jcsy_flight_id,
                 qf.flight_number AS query_flight_number,
                 CASE WHEN qf.is_arrival = 1 THEN qf.arrival_airport ELSE qf.departure_airport END AS airport,
                 qf.booked_count_non_economy,

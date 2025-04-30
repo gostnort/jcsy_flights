@@ -163,7 +163,7 @@ class FlightProcessor:
             self.processing_states = {flight['row']: 'pending' for flight in self.flights_to_process}
             self.flight_db_ids = {}  # Reset database IDs
             
-            # Store JSCY flights in database
+            # Store JCSY flights in database
             self._store_flights_in_database()
             
             self.is_processing = True
@@ -197,7 +197,7 @@ class FlightProcessor:
             }
             
             # Add to database and store the ID
-            db_id = self.db.add_jscy_flight(flight_data)
+            db_id = self.db.add_jcsy_flight(flight_data)
             if db_id:
                 self.flight_db_ids[flight['row']] = db_id
                 print(f"Flight {flight['airline']}{flight['number']} stored in database with ID {db_id}")
@@ -244,7 +244,7 @@ class FlightProcessor:
             with self.db as db:
                 # For now, just update the processed_line field with the status
                 db.cursor.execute('''
-                UPDATE jscy_flights
+                UPDATE jcsy_flights
                 SET processed_line = IFNULL(processed_line, '') || ' (' || ? || ')'
                 WHERE id = ?
                 ''', (status, flight_id))
@@ -326,7 +326,7 @@ class FlightProcessor:
                             ata_time = result.get('ata').strftime('%H:%M') if result.get('ata') else None
                             
                             db.cursor.execute('''
-                            UPDATE jscy_flights
+                            UPDATE jcsy_flights
                             SET std = ?,
                                 etd = ?,
                                 atd = ?,
