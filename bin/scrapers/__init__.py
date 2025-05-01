@@ -1,9 +1,9 @@
-from bin.scrapers.flight_scraper import FlightScraper
-from bin.scrapers.flightview_crawler import FlightViewScraper
-from bin.scrapers.flightstats_crawler import FlightStatsScraper
- 
+from bin.scrapers.flightview_crawler import FlightViewCrawler
+from bin.scrapers.flightstats_crawler import FlightStatsCrawler
+from datetime import datetime
+
 __all__ = [
-    'FlightScraper',
-    'FlightViewScraper',
-    'FlightStatsScraper'
+    'FlightViewCrawler',
+    'FlightStatsCrawler'
 ] 
+

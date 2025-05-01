@@ -1,120 +1,110 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import date, datetime
+from dataclasses import dataclass
+from requests.exceptions import Timeout, RequestException
 
-class FlightViewScraper:
+
+@dataclass
+class return_structure:
+    std: datetime = None
+    atd: datetime = None
+    etd: datetime = None
+    sta: datetime = None
+    ata: datetime = None
+    eta: datetime = None
+
+
+class FlightViewCrawler:
     def __init__(self):
         self.base_url = "https://www.flightview.com/flight-tracker"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        self.year = ""
 
-    def safe_extract_from_table(self, table, label):
+
+    def _extract_time_from_table(self, table, time_label):
         """
-        Safely extract value from table row by label, handling special characters
+        Get time from the table.
+        Args:
+            table: BeautifulSoup object of the table
+            time_label: Label of the time to extract
+        Returns:
+            datetime object of the time
         """
         try:
             if not table:
-                return "N/A"
-            rows = table.find_all('th')
+                return None
+            rows = table.find_all('tr')
             for row in rows:
-                row_text = row.get_text().replace('\xa0', '').strip()
-                if label in row_text:
-                    value_cell = row.find_next('td')
-                    if value_cell:
-                        return value_cell.get_text().replace('\xa0', '').replace(' ', '').strip()
-            return "N/A"
+                th = row.find('th')
+                if th and time_label in th.get_text().strip():
+                    td = row.find('td')
+                    if td:
+                        time_str = td.get_text().replace('\xa0', ' ').replace('&nbsp;', ' ').strip()
+                        if not time_str or time_str == "N/A":
+                            return None
+                        # Parse the time and add the year from initialization
+                        dt = datetime.strptime(time_str, '%I:%M %p, %B %d')
+                        return dt.replace(year=self.year)
+            return None
         except Exception as e:
-            print(f"Extraction error for {label}: {str(e)}")
-            return "N/A"
+            print(f"Extraction error for {time_label}: {str(e)}")
+            return None
 
-    def get_flight_info(self, airline, flight_number, date, is_arrival=True, depapt=None, arrapt="LAX"):
+
+    def get_flight_info(self, airline, flight_number, flight_date: date, depapt=None, arrapt=None):
         """
         Get flight information from FlightView
         Args:
             airline: Airline code (e.g., 'CA')
             flight_number: Flight number without leading zeros (e.g., '984')
             date: Flight date in YYYYMMDD format
-            is_arrival: Whether this is an arrival (True) or departure (False)
             depapt: Optional departure airport code (for specific search)
             arrapt: Arrival airport code, defaults to 'LAX'
         """
         try:
+            self.year = flight_date.year
             # Construct URL based on whether depapt is provided and flight direction
-            if depapt and not is_arrival:
-                # Departure flight with specific departure airport
-                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}&arrapt={arrapt}"
-            elif depapt and is_arrival:
-                # Arrival flight with specific departure airport
-                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={depapt}&arrapt={arrapt}"
-            elif is_arrival:
-                # Generic arrival to arrapt
-                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&arrapt={arrapt}"
+            if depapt is None:
+                url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&arrapt={arrapt}"
+            elif arrapt is None:
+                url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&depapt={depapt}"
             else:
-                # Generic departure from arrapt
-                url = f"{self.base_url}/{airline}/{flight_number}?date={date}&depapt={arrapt}"
-                
+                url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&depapt={depapt}&arrapt={arrapt}"
             print(f"FlightView URL: {url}")
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract the flight date from the page (could be different from requested date)
-            flight_date_elem = soup.select_one('.fvDate')
-            flight_date = date  # Default to requested date
-            if flight_date_elem:
-                try:
-                    date_text = flight_date_elem.text.strip()
-                    date_obj = datetime.strptime(date_text, "%A, %B %d, %Y")
-                    flight_date = date_obj.strftime("%Y%m%d")
-                except Exception as e:
-                    print(f"Failed to parse flight date: {str(e)}")
-            
-            # Get status
-            flight_status = soup.select_one('.flight-status')
-            if not flight_status:
-                print(f"Invalid response for flight {airline}{flight_number}")
+            try:
+                response = requests.get(url, headers=self.headers, timeout=5)
+            except Timeout:
+                print(f"Request timed out for flight {airline}{flight_number}")
                 return None
-                
-            status = flight_status.text.strip()
-            
+            except RequestException as e:
+                print(f"Network error for flight {airline}{flight_number}: {str(e)}")
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
             # Get departure info table
             dep_table = soup.find('table', {'id': 'ffDepartureInfo'})
-            dep_scheduled = self.safe_extract_from_table(dep_table, 'Scheduled Time')
-            dep_actual = self.safe_extract_from_table(dep_table, 'Actual Time')
-            dep_terminal = self.safe_extract_from_table(dep_table, 'Terminal - Gate')
-            
+            dep_scheduled = self._extract_time_from_table(dep_table, 'Scheduled Time')
+            dep_actual = self._extract_time_from_table(dep_table, 'Actual Time')
+            dep_estimated = self._extract_time_from_table(dep_table, 'Estimated Time') 
             # Get arrival info table
             arr_table = soup.find('table', {'id': 'ffArrivalInfo'})
-            arr_scheduled = self.safe_extract_from_table(arr_table, 'Scheduled Time')
-            arr_actual = self.safe_extract_from_table(arr_table, 'Actual Time')
-            arr_estimated = self.safe_extract_from_table(arr_table, 'Estimated Time')
-            arr_terminal = self.safe_extract_from_table(arr_table, 'Terminal - Gate')
-            arr_baggage = self.safe_extract_from_table(arr_table, 'Baggage Claim')
-            
-            return {
-                'status': status,
-                'date': flight_date,  # Include actual flight date
-                'departure': {
-                    'scheduled': dep_scheduled,
-                    'actual': dep_actual,
-                    'terminal_gate': dep_terminal,
-                    'status': status if not is_arrival else None
-                },
-                'arrival': {
-                    'scheduled': arr_scheduled,
-                    'actual': arr_actual,
-                    'estimated': arr_estimated,
-                    'terminal_gate': arr_terminal,
-                    'baggage_claim': arr_baggage,
-                    'status': status if is_arrival else None
-                }
-            }
-
+            arr_scheduled = self._extract_time_from_table(arr_table, 'Scheduled Time')
+            arr_actual = self._extract_time_from_table(arr_table, 'Actual Time')
+            arr_estimated = self._extract_time_from_table(arr_table, 'Estimated Time')
+            return return_structure(
+                std=dep_scheduled,
+                atd=dep_actual,
+                etd=dep_estimated,
+                sta=arr_scheduled,
+                ata=arr_actual,
+                eta=arr_estimated
+            )
         except requests.exceptions.RequestException as e:
             print(f"Network error for flight {airline}{flight_number}: {str(e)}")
             return None
         except Exception as e:
             print(f"Error scraping flight info: {str(e)}")
             return None 
+        

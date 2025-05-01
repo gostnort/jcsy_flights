@@ -1,16 +1,17 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, date
 import random
+from bin.scrapers.flightview_crawler import return_structure
+from requests.exceptions import Timeout, RequestException
 
-class FlightStatsScraper:
+
+
+class FlightStatsCrawler:
     def __init__(self):
         self.url_template = "https://www.flightstats.com/v2/flight-tracker/{airline}/{number}?year={year}&month={month}&date={date}"
-        
         # Headers for requests method
         user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36"
         ]
@@ -20,191 +21,109 @@ class FlightStatsScraper:
             'Accept-Language': 'en-US,en;q=0.9',
             'Connection': 'keep-alive'
         }
+        self.year = ""
+        self.month = ""
+        self.day = ""
     
-    def get_flight_info(self, airline, number, date_str):
+
+    def get_flight_info(self, airline, flight_number, flight_date: date):
         """
         Get flight information from FlightStats
-        
-        :param airline: Airline code (e.g., 'AA')
-        :param number: Flight number (e.g., '123')
-        :param date_str: Date string in format YYYYMMDD
-        :return: Dictionary with flight details or None if not found
+        Args:
+            airline: Airline code (e.g., 'AA')
+            flight_number: Flight number (e.g., '123')
+            flight_date: The date object date(YYYY, MM, DD)
+        Returns:
+            The structure with the flight details from the FlightViewCrawler.
         """
         try:
-            # Convert date_str (YYYYMMDD) to year, month, day
-            date_obj = datetime.strptime(date_str, "%Y%m%d")
-            year = date_obj.year
-            month = date_obj.month
-            day = date_obj.day
-            
+            self.year = flight_date.year
+            self.month = flight_date.month
+            self.day = flight_date.day
             # Build the URL
             url = self.url_template.format(
                 airline=airline,
-                number=number,
-                year=year,
-                month=str(month).zfill(2),
-                date=str(day).zfill(2)
+                number=flight_number,
+                year=self.year,
+                month=self.month,
+                date=self.day
             )
-            
             print(f"FlightStats URL: {url}")
-            
             # Make the request with headers
-            response = requests.get(url, headers=self.headers)
-            if response.status_code != 200:
-                print(f"Failed to load flight data: HTTP {response.status_code}")
+            try:
+                response = requests.get(url, headers=self.headers, timeout=5)
+            except Timeout:
+                print(f"Request timed out for flight {airline}{flight_number}")
                 return None
-            
+            except RequestException as e:
+                print(f"Network error for flight {airline}{flight_number}: {str(e)}")
+                return None
             # Parse the HTML
-            flight_data = self._parse_flight_data(html_content=response.text)
-            
-            # Add flight status based on available data
-            if flight_data:
-                # Determine flight status based on available times
-                flight_data = self._add_flight_status(flight_data)
-                
-                # Store the original search date
-                flight_data['search_date'] = date_str
-            
-            return flight_data
-            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            return self._parse_flight_data(soup)
         except Exception as e:
             print(f"Error getting flight info: {str(e)}")
             return None
     
-    def _parse_flight_data(self, html_content):
+
+    def _parse_flight_data(self, soup) -> return_structure:
         """
-        Parse flight data from HTML content
-        
-        :param html_content: HTML content of the FlightStats page
-        :return: Dictionary with flight details or None if not valid
+        Parse flight data from BeautifulSoup object.
+        Args:
+            soup: BeautifulSoup object of the flight data
+        Returns:
+            return_structure object with flight details
         """
-        try:
-            # Use BeautifulSoup for parsing
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Initialize result dictionary with just the essential fields
-            result = {
-                'departure': {
-                    'scheduled': 'N/A',
-                    'actual': 'N/A',
-                    'estimated': 'N/A',
-                    'airport': 'N/A',
-                    'status': 'Unknown'
-                },
-                'arrival': {
-                    'scheduled': 'N/A',
-                    'actual': 'N/A',
-                    'estimated': 'N/A',
-                    'airport': 'N/A',
-                    'status': 'Unknown'
-                }
-            }
-            
-            # Try to get the flight status
-            status_div = soup.find('div', class_=lambda c: c and (c.startswith('status__StatusContainer-') or c.startswith('status__Status-')))
-            if status_div:
-                status_text = status_div.text.strip()
-                # Store status in both departure and arrival for now
-                result['departure']['status'] = status_text
-                result['arrival']['status'] = status_text
-            
-            # Find the main ticket card sections
-            ticket_cards = soup.find_all('div', class_=lambda c: c and c.startswith('ticket__TicketCard-'))
-            
-            if len(ticket_cards) >= 2:
-                departure_card = ticket_cards[0]
-                arrival_card = ticket_cards[1]
-                
-                # Extract Departure Info
-                dep_airport_link = departure_card.find('a', class_=lambda c: c and c.startswith('ticket__AirportLink-'))
-                if dep_airport_link:
-                    result['departure']['airport'] = dep_airport_link.text.strip()
-                
-                dep_time_sections = departure_card.find_all('div', class_=lambda c: c and c.startswith('ticket__InfoSection-'))
-                for section in dep_time_sections:
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Scheduled')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['departure']['scheduled'] = time_div.text.strip()
-                            
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Actual')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['departure']['actual'] = time_div.text.strip()
-                            
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Estimated')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['departure']['estimated'] = time_div.text.strip()
-                
-                # Extract Arrival Info
-                arr_airport_link = arrival_card.find('a', class_=lambda c: c and c.startswith('ticket__AirportLink-'))
-                if arr_airport_link:
-                    result['arrival']['airport'] = arr_airport_link.text.strip()
-                
-                arr_time_sections = arrival_card.find_all('div', class_=lambda c: c and c.startswith('ticket__InfoSection-'))
-                for section in arr_time_sections:
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Scheduled')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['arrival']['scheduled'] = time_div.text.strip()
-                            
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Actual')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['arrival']['actual'] = time_div.text.strip()
-                            
-                    label = section.find('div', class_=lambda c: c and c.startswith('text-helper__TextHelper-'), string='Estimated')
-                    if label:
-                        time_div = label.find_next_sibling('div')
-                        if time_div:
-                            result['arrival']['estimated'] = time_div.text.strip()
-              
-            return result
-            
-        except Exception as e:
-            print(f"Error parsing flight data: {str(e)}")
-            return None
-            
-    def _add_flight_status(self, flight_data):
-        """
-        Add derived flight status based on available time data
-        
-        :param flight_data: Dictionary with parsed flight data
-        :return: Updated flight data dictionary with status
-        """
-        try:
-            # Check if we already have a status
-            if 'departure' in flight_data and 'status' in flight_data['departure'] and flight_data['departure']['status'] != 'Unknown':
-                return flight_data
-                
-            # Determine status based on available times
-            departure_status = 'Scheduled'
-            arrival_status = 'Scheduled'
-            
-            # Departure status
-            if flight_data['departure']['actual'] != 'N/A':
-                departure_status = 'Departed'
-            elif flight_data['departure']['estimated'] != 'N/A':
-                departure_status = 'Estimated'
-                
-            # Arrival status
-            if flight_data['arrival']['actual'] != 'N/A':
-                arrival_status = 'Arrived'
-            elif flight_data['arrival']['estimated'] != 'N/A':
-                arrival_status = 'Expected'
-                
-            # Update the statuses
-            flight_data['departure']['status'] = departure_status
-            flight_data['arrival']['status'] = arrival_status
-            
-            return flight_data
-            
-        except Exception as e:
-            print(f"Error adding flight status: {str(e)}")
-            return flight_data 
+        result = return_structure()
+        dep_section = soup.find('div', string='Flight Departure Times')
+        if dep_section:
+            time_container = dep_section.find_next('div', class_=lambda x: x and 'TimeGroupContainer' in x)
+            if time_container:
+                std_elem = time_container.find('div', string='Scheduled')
+                if std_elem:
+                    time_div = std_elem.find_next('div')
+                    if time_div:
+                        std_time = time_div.contents[0].strip()
+                        if std_time:#if the time not exists, datetime will raise an error.
+                            result.std = datetime.strptime(std_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                atd_elem = time_container.find('div', string='Actual')
+                if atd_elem:
+                    time_div = atd_elem.find_next('div')
+                    if time_div:
+                        atd_time = time_div.contents[0].strip()
+                        if atd_time:
+                            result.atd = datetime.strptime(atd_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                etd_elem = time_container.find('div', string='Estimated')
+                if etd_elem:
+                    time_div = etd_elem.find_next('div')
+                    if time_div:
+                        etd_time = time_div.contents[0].strip()
+                        if etd_time:
+                            result.etd = datetime.strptime(etd_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+        arr_section = soup.find('div', string='Flight Arrival Times')
+        if arr_section:
+            time_container = arr_section.find_next('div', class_=lambda x: x and 'TimeGroupContainer' in x)
+            if time_container:
+                sta_elem = time_container.find('div', string='Scheduled')
+                if sta_elem:
+                    time_div = sta_elem.find_next('div')
+                    if time_div:
+                        sta_time = time_div.contents[0].strip()
+                        if sta_time:
+                            result.sta = datetime.strptime(sta_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                ata_elem = time_container.find('div', string='Actual')
+                if ata_elem:
+                    time_div = ata_elem.find_next('div')
+                    if time_div:
+                        ata_time = time_div.contents[0].strip()
+                        if ata_time:
+                            result.ata = datetime.strptime(ata_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                eta_elem = time_container.find('div', string='Estimated')
+                if eta_elem:
+                    time_div = eta_elem.find_next('div')
+                    if time_div:
+                        eta_time = time_div.contents[0].strip()
+                        if eta_time:
+                            result.eta = datetime.strptime(eta_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+        return result
+

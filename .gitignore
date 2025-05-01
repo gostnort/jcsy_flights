@@ -29,5 +29,5 @@ build/
 Thumbs.db 
 
 *.db
-JCSY*.txt
 test*.py
+sample*.txt
