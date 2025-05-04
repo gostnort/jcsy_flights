@@ -62,7 +62,7 @@ class FlightDatabase:
                 airline TEXT NOT NULL,
                 flight_number TEXT NOT NULL,
                 flight_date DATE NOT NULL,
-                airport TEXT NOT NULL,
+                departure_airport TEXT NOT NULL,
                 std_text TEXT,
                 std DATETIME,
                 etd DATETIME,
@@ -126,36 +126,5 @@ class FlightDatabase:
             self.cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_query_flights_timestamp
             ON query_flights(query_timestamp)
-            ''')
-            self.connection.commit()
-
-    def create_query_results_view(self):
-        """Create the query_results view after all tables are ready"""
-        with self:
-            # Drop the old query_results view if it exists
-            self.cursor.execute("DROP VIEW IF EXISTS query_results")
-            # Create Query Results View (for UI display)
-            self.cursor.execute('''
-            CREATE VIEW IF NOT EXISTS query_results AS
-            SELECT 
-                qf.id,
-                qf.jcsy_flight_id,
-                qf.flight_number AS query_flight_number,
-                CASE WHEN qf.is_arrival = 1 THEN qf.arrival_airport ELSE qf.departure_airport END AS airport,
-                qf.booked_count_non_economy,
-                qf.booked_count_economy,
-                qf.checked_count_non_economy,
-                qf.checked_count_economy,
-                qf.check_count_infant,
-                qf.bags_count_piece,
-                qf.bags_count_weight,
-                qf.query_timestamp AS last_updated,
-                qf.delayed,
-                qf.std, qf.etd, qf.atd,
-                qf.sta, qf.eta, qf.ata,
-                CASE WHEN qf.is_arrival = 1 THEN qf.sta ELSE qf.std END AS scheduled_time,
-                CASE WHEN qf.is_arrival = 1 THEN qf.eta ELSE qf.etd END AS estimated_time,
-                CASE WHEN qf.is_arrival = 1 THEN qf.ata ELSE qf.atd END AS actual_time
-            FROM query_flights qf
             ''')
             self.connection.commit()

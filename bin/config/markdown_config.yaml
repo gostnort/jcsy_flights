@@ -1,0 +1,22 @@
+# Configuration for markdown formatting
+# Database fields are referenced with {} placeholders
+# [] includes the function name of the markdown_formatter.py
+# Header format
+header: >
+  JCSY:{header_airline}{header_flight_number}/{flight_date}/{departure_airport},[header_I_O]
+
+# Table field names (pipe-separated)
+fields: "Flight Number|Airport|Delay Mins|Booked Pax|Checked Pax|Bags/Weight"
+
+# Column alignment (pipe-separated)
+spaces: ":--------|:-----|:------|-------:|-----------:|--------:"
+
+# Data template for each field
+data:
+  # Each key must match a field in the fields string
+  "Flight Number": "{airline}{flight_number}"
+  "Airport": [judge_output_airport]
+  "Delay Mins": [delay_mins]
+  "Booked Pax": "{booked_count_non_economy}/{booked_count_economy}"
+  "Checked Pax": "{checked_count_non_economy}/{checked_count_economy}+{check_count_infant}"
+  "Bags/Weight": "{bags_count_piece}/{bag_count_weight}"

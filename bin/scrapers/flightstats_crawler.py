@@ -21,9 +21,9 @@ class FlightStatsCrawler:
             'Accept-Language': 'en-US,en;q=0.9',
             'Connection': 'keep-alive'
         }
-        self.year = ""
-        self.month = ""
-        self.day = ""
+        self.departure_year = ""
+        self.departure_month = ""
+        self.departure_day = ""
     
 
     def get_flight_info(self, airline, flight_number, flight_date: date):
@@ -37,16 +37,16 @@ class FlightStatsCrawler:
             The structure with the flight details from the FlightViewCrawler.
         """
         try:
-            self.year = flight_date.year
-            self.month = flight_date.month
-            self.day = flight_date.day
+            self.departure_year = flight_date.year
+            self.departure_month = flight_date.month
+            self.departure_day = flight_date.day
             # Build the URL
             url = self.url_template.format(
                 airline=airline,
                 number=flight_number,
-                year=self.year,
-                month=self.month,
-                date=self.day
+                year=self.departure_year,
+                month=self.departure_month,
+                date=self.departure_day
             )
             print(f"FlightStats URL: {url}")
             # Make the request with headers
@@ -85,23 +85,32 @@ class FlightStatsCrawler:
                     if time_div:
                         std_time = time_div.contents[0].strip()
                         if std_time:#if the time not exists, datetime will raise an error.
-                            result.std = datetime.strptime(std_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.std = datetime.strptime(std_time, '%H:%M').replace(year=self.departure_year, month=self.departure_month, day=self.departure_day)
                 atd_elem = time_container.find('div', string='Actual')
                 if atd_elem:
                     time_div = atd_elem.find_next('div')
                     if time_div:
                         atd_time = time_div.contents[0].strip()
                         if atd_time:
-                            result.atd = datetime.strptime(atd_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.atd = datetime.strptime(atd_time, '%H:%M').replace(year=self.departure_year, month=self.departure_month, day=self.departure_day)
                 etd_elem = time_container.find('div', string='Estimated')
                 if etd_elem:
                     time_div = etd_elem.find_next('div')
                     if time_div:
                         etd_time = time_div.contents[0].strip()
                         if etd_time:
-                            result.etd = datetime.strptime(etd_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.etd = datetime.strptime(etd_time, '%H:%M').replace(year=self.departure_year, month=self.departure_month, day=self.departure_day)
         arr_section = soup.find('div', string='Flight Arrival Times')
         if arr_section:
+            date_container = arr_section.find_next('div', class_=lambda x: x and 'text-helper' in x)
+            if date_container:
+                date_text = date_container.contents[0].strip()
+                if date_text:
+                    arrival_date = datetime.strptime(date_text, '%d-%B-%Y').date()
+                    if arrival_date:
+                        arrival_year = arrival_date.year
+                        arrival_month = arrival_date.month
+                        arrival_day = arrival_date.day
             time_container = arr_section.find_next('div', class_=lambda x: x and 'TimeGroupContainer' in x)
             if time_container:
                 sta_elem = time_container.find('div', string='Scheduled')
@@ -110,20 +119,20 @@ class FlightStatsCrawler:
                     if time_div:
                         sta_time = time_div.contents[0].strip()
                         if sta_time:
-                            result.sta = datetime.strptime(sta_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.sta = datetime.strptime(sta_time, '%H:%M').replace(year=arrival_year, month=arrival_month, day=arrival_day)
                 ata_elem = time_container.find('div', string='Actual')
                 if ata_elem:
                     time_div = ata_elem.find_next('div')
                     if time_div:
                         ata_time = time_div.contents[0].strip()
                         if ata_time:
-                            result.ata = datetime.strptime(ata_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.ata = datetime.strptime(ata_time, '%H:%M').replace(year=arrival_year, month=arrival_month, day=arrival_day)
                 eta_elem = time_container.find('div', string='Estimated')
                 if eta_elem:
                     time_div = eta_elem.find_next('div')
                     if time_div:
                         eta_time = time_div.contents[0].strip()
                         if eta_time:
-                            result.eta = datetime.strptime(eta_time, '%H:%M').replace(year=self.year, month=self.month, day=self.day)
+                            result.eta = datetime.strptime(eta_time, '%H:%M').replace(year=arrival_year, month=arrival_month, day=arrival_day)
         return result
 

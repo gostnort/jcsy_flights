@@ -26,6 +26,7 @@ from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from src.scrapers import FlightScraper
 from src.processors import FlightProcessor
 from src.database import FlightDatabase
+from src.ui.markdown_window import MarkdownWindow
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -57,6 +58,11 @@ class MainWindow(QMainWindow):
         list_type_layout.addWidget(self.arrival_radio)
         list_type_layout.addWidget(self.departure_radio)
         list_type_layout.addStretch()
+        
+        # Add markdown viewer button
+        self.markdown_button = QPushButton("Markdown View")
+        self.markdown_button.clicked.connect(self.open_markdown_viewer)
+        list_type_layout.addWidget(self.markdown_button)
         # ---------------------------
         
         # Create tab widget for main/history views
@@ -598,3 +604,24 @@ class MainWindow(QMainWindow):
             dialog.exec()
         except Exception as e:
             print(f"Error showing flight details: {str(e)}")
+
+    def open_markdown_viewer(self):
+        """Open the markdown viewer window"""
+        try:
+            # Create a FlightGet instance for the markdown window
+            from bin.database.flight_db import FlightDatabase
+            from bin.database.flight_get import FlightGet
+            
+            db = FlightDatabase()
+            db.connect()
+            flight_getter = FlightGet(db)
+            
+            # Create and show the markdown window
+            markdown_window = MarkdownWindow(flight_getter, self)
+            markdown_window.show()
+            
+            # Store reference to prevent garbage collection
+            self.markdown_window = markdown_window
+            
+        except Exception as e:
+            print(f"Error opening markdown viewer: {str(e)}")

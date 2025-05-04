@@ -54,7 +54,7 @@ class FlightViewCrawler:
             return None
 
 
-    def get_flight_info(self, airline, flight_number, flight_date: date, depapt=None, arrapt=None):
+    def get_flight_info(self, airline, flight_number, flight_date: date, depapt='', arrapt=''):
         """
         Get flight information from FlightView
         Args:
@@ -65,11 +65,14 @@ class FlightViewCrawler:
             arrapt: Arrival airport code, defaults to 'LAX'
         """
         try:
+            # Validate that at least one airport is provided
+            if depapt == '' and arrapt == '':
+                raise ValueError("Either departure airport or arrival airport must be provided") 
             self.year = flight_date.year
             # Construct URL based on whether depapt is provided and flight direction
-            if depapt is None:
+            if depapt == '':
                 url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&arrapt={arrapt}"
-            elif arrapt is None:
+            elif arrapt == '':
                 url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&depapt={depapt}"
             else:
                 url = f"{self.base_url}/{airline}/{flight_number}?date={flight_date.strftime('%Y%m%d')}&depapt={depapt}&arrapt={arrapt}"

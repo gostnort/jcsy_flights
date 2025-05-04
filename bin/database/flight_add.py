@@ -29,14 +29,14 @@ class FlightAdd:
             'flight_number': 'header_flight_number',
             'flight_date': 'header_flight_date',
             'is_arrival': 'is_arrival',
-            'airport': 'header_airport',
+            'departure_airport': 'header_airport',
         }
         self.QUERY_FLIGHT_FIELDS = {
             'airline': 'airline',
             'flight_number': 'flight_number',
             'flight_date': 'header_flight_date',
             'departure_airport': 'airport',
-            'arrival_airport': 'header_airport',
+            'arrival_airport': '',
             'std_text': 'std_text',
             'booked_count_non_economy': 'booked_count_non_economy',
             'booked_count_economy': 'booked_count_economy',
@@ -46,7 +46,6 @@ class FlightAdd:
             'bags_count_piece': 'bags_count_piece',
             'bags_count_weight': 'bags_count_weight',
         }
-        self.HOME_AIRPORT = "LAX"
 
     @property
     def UPDATE_FIELDS(self):
@@ -92,13 +91,15 @@ class FlightAdd:
         return result_list
 
 
-    def add_jcsy_content(self, content: str) -> None:   
+    def add_jcsy_content(self, content: str) -> int:   
         """
         Parse JCSY format content and add it to the database
         Args:
             content: Multi-line string of JCSY content  
         Raises:
             Exception: If parsing or database operations fail
+        Returns:
+            The header flight id of the added flight
         """
         try:
             # Parse the content using the configuration-driven parser
@@ -122,10 +123,12 @@ class FlightAdd:
                 for flight in flight_data:
                     # Add the header flight reference
                     flight['jcsy_flight_id'] = header_flight_id
-                    # Set airports based on arrival/departure status
-                    if not header_data[0].get('is_arrival'):
-                        flight['departure_airport'] = self.HOME_AIRPORT
-                        flight['arrival_airport'] = flight.get('airport', '')
+                    '''Because the jcsy output the arrival airport for listing flights
+                    when the header used the option 'O' that cause is_arrival is zero.
+                    '''
+                    if header_data[0].get('is_arrival') == 0:
+                        flight['arrival_airport'] = flight.get('departure_airport', '')
+                        flight['departure_airport'] = ''
                     # Convert numeric fields to 0 if None
                     for field in ['booked_count_non_economy', 'booked_count_economy', 
                                 'checked_count_non_economy', 'checked_count_economy',
@@ -142,6 +145,7 @@ class FlightAdd:
                     '''
                     self.db.cursor.execute(query, list(flight.values()))
                 self.db.connection.commit()
+                return header_flight_id
         except Exception as e:
             raise Exception(f"Failed to add JCSY content: {str(e)}") 
         
@@ -151,7 +155,7 @@ class FlightAdd:
         Update the a flight id with the table name in the database if the value is not None.
         the table name and the flight id are required.
         Args:
-            update_fields: The dictionary sample is showing in the __init__();
+            update_fields: The dictionary structure defined in the UPDATE_FIELDS property;
         """
         try:
             # Validate required fields
