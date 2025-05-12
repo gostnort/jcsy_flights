@@ -1,7 +1,7 @@
 import yaml
 import re
 import os
-from typing import Dict, Any, List, Callable
+from typing import Any, Callable
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -25,7 +25,7 @@ class JcsyParser:
         self.special_parsers = self._prepare_special_parsers()
     
 
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
+    def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load configuration from YAML file"""
         try:    
             with open(config_path, 'r') as f:
@@ -34,7 +34,7 @@ class JcsyParser:
             raise FileNotFoundError(f"Error: The configuration file not found at {config_path}.\n {e}")
 
 
-    def _prepare_transforms(self) -> Dict[str, Callable]:
+    def _prepare_transforms(self) -> dict[str, Callable]:
         """Prepare transform functions from configuration"""
         transforms = {}
         for name, transform_config in self.config.get('transforms', {}).items():
@@ -42,7 +42,7 @@ class JcsyParser:
         return transforms
     
 
-    def _prepare_type_converters(self) -> Dict[str, Callable]:
+    def _prepare_type_converters(self) -> dict[str, Callable]:
         """Prepare type converter functions from configuration"""
         converters = {}
         for type_name, type_config in self.config.get('types', {}).items():
@@ -50,7 +50,7 @@ class JcsyParser:
         return converters
     
 
-    def _prepare_special_parsers(self) -> Dict[str, Callable]:
+    def _prepare_special_parsers(self) -> dict[str, Callable]:
         """Prepare special parser functions for complex formats"""
         parsers = {}
         # Local function to extract parsers from special_parsers section
@@ -76,7 +76,7 @@ class JcsyParser:
         return parsers
     
     
-    def parse_content(self, content: str) -> Dict[str, Dict[str, Any]]:
+    def parse_content(self, content: str) -> dict[str, dict[str, Any]]:
         """
         Parse content string according to configuration with parallel processing
         Returns a dictionary where keys are pattern types and values are dictionaries of field->value
@@ -134,7 +134,7 @@ class JcsyParser:
         return {**header, **flight_data, 'line': line}
     
 
-    def _parse_line(self, line: str, line_type: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _parse_line(self, line: str, line_type: str, context: dict[str, Any] = None) -> dict[str, Any]:
         """
         Parse a single line according to configuration
         Args:

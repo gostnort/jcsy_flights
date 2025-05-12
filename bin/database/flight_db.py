@@ -63,6 +63,7 @@ class FlightDatabase:
                 flight_number TEXT NOT NULL,
                 flight_date DATE NOT NULL,
                 departure_airport TEXT NOT NULL,
+                arrival_airport TEXT NOT NULL,
                 std_text TEXT,
                 std DATETIME,
                 etd DATETIME,
@@ -70,7 +71,7 @@ class FlightDatabase:
                 sta DATETIME,
                 eta DATETIME,
                 ata DATETIME,
-                is_arrival INTEGER NOT NULL,
+                inbound_not INTEGER NOT NULL,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (airline, flight_number, flight_date)
             )

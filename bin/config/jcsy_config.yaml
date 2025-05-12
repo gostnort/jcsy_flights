@@ -3,10 +3,10 @@ format_version: "1.0"
 
 # Simple pattern-based extraction with named capture groups
 header:
-  pattern: "^JCSY:(?P<header_airline>[A-Z]{2})(?P<header_flight_number>\\d+)/(?P<header_flight_date>\\d+[A-Z]{3})/(?P<header_airport>[A-Z]{3}),(?P<is_arrival>[I|O])"
+  pattern: "^JCSY:(?P<header_airline>[A-Z]{2})(?P<header_flight_number>\\d+)/(?P<header_flight_date>\\d+[A-Z]{3})/(?P<header_airport>[A-Z]{3}),(?P<inbound_not>[I|O])"
   transforms:
     header_flight_date: parse_header_date
-    header_is_arrival: "lambda x: 1 if x == 'I' else 0"
+    inbound_not: "lambda x: 1 if x == 'I' else 0"
 
 title_line:
   pattern: "^FLT/"

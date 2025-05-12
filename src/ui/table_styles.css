@@ -1,0 +1,18 @@
+table {
+    border-collapse: collapse;
+    width: 100%; /* Optional: makes table take full width */
+    border: 1px solid #555555; /* Darker grey border for the table */
+    color: #e0e0e0; /* Light grey text color for table content */
+}
+th, td {
+    border: 1px solid #444444; /* Darker grey for cell borders */
+    text-align: left;
+    padding: 8px;
+}
+th {
+    background-color: #3a3a3a; /* Dark grey background for headers */
+    color: #f0f0f0; /* Lighter text for headers */
+}
+td {
+    background-color: #2a2a2a; /* Very dark grey for data cells */
+} 

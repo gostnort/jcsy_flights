@@ -75,6 +75,15 @@ class FlightStatsCrawler:
             return_structure object with flight details
         """
         result = return_structure()
+        # Extract airport codes from links that contain /airport-conditions/
+        airport_links = soup.find_all('a', href=lambda x: x and '/airport-conditions/' in x)
+        # The first two links typically contain the departure and arrival airports
+        if len(airport_links) >= 2:
+            # First link is departure airport (ABQ)
+            result.departure_airport = airport_links[0].text.strip()
+            # Second link is arrival airport (LAX)
+            result.arrival_airport = airport_links[1].text.strip()
+        # Get flight departure and arrival times
         dep_section = soup.find('div', string='Flight Departure Times')
         if dep_section:
             time_container = dep_section.find_next('div', class_=lambda x: x and 'TimeGroupContainer' in x)

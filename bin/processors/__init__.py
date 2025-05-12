@@ -1,3 +1,3 @@
-from .flight_processor import FlightProcessor
+from .radio_view import ViewModeHandler
 
-__all__ = ['FlightProcessor']
+__all__ = ['ViewModeHandler']

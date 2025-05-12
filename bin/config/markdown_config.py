@@ -5,7 +5,6 @@ This module provides functions to convert flight data from the database
 to a markdown format that can be rendered in the UI.
 '''
 from datetime import datetime, date
-from typing import Dict, List, Union, Any, Callable
 import yaml
 import os
 import re

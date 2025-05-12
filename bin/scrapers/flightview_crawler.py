@@ -7,6 +7,8 @@ from requests.exceptions import Timeout, RequestException
 
 @dataclass
 class return_structure:
+    departure_airport: str = None
+    arrival_airport: str = None
     std: datetime = None
     atd: datetime = None
     etd: datetime = None
@@ -88,15 +90,33 @@ class FlightViewCrawler:
             soup = BeautifulSoup(response.text, 'html.parser')
             # Get departure info table
             dep_table = soup.find('table', {'id': 'ffDepartureInfo'})
+            dep_airport = None
+            if dep_table:
+                script_tag = dep_table.find('script')
+                if script_tag:
+                    # Extract airport code from ftGetAirport("IST","Istanbul")
+                    script_text = script_tag.string
+                    if script_text and 'ftGetAirport' in script_text:
+                        dep_airport = script_text.split('"')[1]
             dep_scheduled = self._extract_time_from_table(dep_table, 'Scheduled Time')
             dep_actual = self._extract_time_from_table(dep_table, 'Actual Time')
             dep_estimated = self._extract_time_from_table(dep_table, 'Estimated Time') 
             # Get arrival info table
             arr_table = soup.find('table', {'id': 'ffArrivalInfo'})
+            arr_airport = None
+            if arr_table:
+                script_tag = arr_table.find('script')
+                if script_tag:
+                    # Extract airport code from ftGetAirport("LAX","Los Angeles, CA")
+                    script_text = script_tag.string
+                    if script_text and 'ftGetAirport' in script_text:
+                        arr_airport = script_text.split('"')[1]
             arr_scheduled = self._extract_time_from_table(arr_table, 'Scheduled Time')
             arr_actual = self._extract_time_from_table(arr_table, 'Actual Time')
             arr_estimated = self._extract_time_from_table(arr_table, 'Estimated Time')
             return return_structure(
+                departure_airport=dep_airport,
+                arrival_airport=arr_airport,
                 std=dep_scheduled,
                 atd=dep_actual,
                 etd=dep_estimated,

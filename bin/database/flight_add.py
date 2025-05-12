@@ -1,6 +1,9 @@
 from bin.database.flight_db import FlightDatabase
-from bin.config.config_parser import JcsyParser
-from datetime import datetime
+from bin.config.jcsy_config import JcsyParser
+from datetime import datetime, date
+from bin.database.flight_get import FlightGet
+from bin.scrapers.flightview_crawler import FlightViewCrawler, return_structure
+from bin.scrapers.flightstats_crawler import FlightStatsCrawler
 
 
 class FlightAdd:
@@ -11,6 +14,8 @@ class FlightAdd:
         'table': str,
         'id': int,
         'flight_date': datetime,
+        'departure_airport': str,
+        'arrival_airport': str,
         'std': datetime,
         'etd': datetime,
         'atd': datetime,
@@ -18,6 +23,46 @@ class FlightAdd:
         'eta': datetime,
         'ata': datetime
     }
+
+    _JCSY_FLIGHT_REQUIRED_FIELDS = {
+        'airline': str,
+        'flight_number': str,
+        'flight_date': date, 
+        'departure_airport': str,
+        'arrival_airport': str,
+        'inbound_not': int,
+        'std_text': str,
+        'std': datetime,
+        'etd': datetime,
+        'atd': datetime,
+        'sta': datetime,
+        'eta': datetime,
+        'ata': datetime,
+        }
+
+    _QUERY_FLIGHT_REQUIRED_FIELDS = {
+        'jcsy_flight_id': int,
+        'airline': str,
+        'flight_number': str,
+        'flight_date': date, 
+        'departure_airport': str,
+        'arrival_airport': str,
+        'std_text': str,
+        'std': datetime,
+        'etd': datetime,
+        'atd': datetime,
+        'sta': datetime,
+        'eta': datetime,
+        'ata': datetime,
+        'delayed': bool,
+        'booked_count_non_economy': int,
+        'booked_count_economy': int,
+        'checked_count_non_economy': int,
+        'checked_count_economy': int,
+        'check_count_infant': int,
+        'bags_count_piece': int,
+        'bags_count_weight': int,
+        }
 
     def __init__(self, config_path: str = 'jcsy_config.yaml'):
         """Initialize with database connection and config parser"""
@@ -28,7 +73,7 @@ class FlightAdd:
             'airline': 'header_airline',
             'flight_number': 'header_flight_number',
             'flight_date': 'header_flight_date',
-            'is_arrival': 'is_arrival',
+            'inbound_not': 'inbound_not',
             'departure_airport': 'header_airport',
         }
         self.QUERY_FLIGHT_FIELDS = {
@@ -55,6 +100,113 @@ class FlightAdd:
         copy_dict = {key: None for key in flight_add.UPDATE_FIELDS.keys()}
         """
         return self._UPDATE_FIELDS_STRUCTURE.copy()
+    
+    @property
+    def JCSY_FLIGHT_REQUIRED_FIELDS(self):
+        """
+        Read-only property that returns a copy of the JCSY flight required fields structure
+        """
+        return self._JCSY_FLIGHT_REQUIRED_FIELDS.copy()
+    
+
+    @property
+    def QUERY_FLIGHT_REQUIRED_FIELDS(self):
+        """
+        Read-only property that returns a copy of the query flight required fields structure
+        """
+        return self._QUERY_FLIGHT_REQUIRED_FIELDS.copy()
+
+
+    def add_jcsy_content(self, jcsy_content:str) -> list[int]:
+        parser_dict = self.parser.parse_content(jcsy_content)
+        header_data_list = self._get_data_from_parser('jcsy_flights', self.HEADER_FIELDS, parser_dict)  
+        if not header_data_list:
+            raise ValueError("No header data parsed from JCSY content.")
+        single_header_data_from_parser = header_data_list[0] # Data directly from parser
+        flight_get = FlightGet() 
+        header_id = 0
+        try:
+            # Attempt to find the flight in the database using key info from parser output
+            flight_id_list = flight_get.return_flight_id(
+                'jcsy_flights',
+                single_header_data_from_parser['airline'],
+                single_header_data_from_parser['flight_number'],
+                single_header_data_from_parser['flight_date'] 
+            )
+            if flight_id_list:
+                header_id = flight_id_list[0]
+        except (ValueError, IndexError, KeyError):
+            # Flight not found or essential key data missing in parser output to perform lookup
+            pass # Will proceed to insert if header_id remains 0
+        # If flight was not found in DB, insert it using only parser data
+        if header_id == 0:
+            # At this stage, we insert with what the parser gives us.
+            # Other fields (arrival_airport, std, eta, ata etc.) will be null 
+            # if not provided by the parser and will be filled by flight_maintain.py later.
+            # We need to ensure all keys expected by _JCSY_FLIGHT_REQUIRED_FIELDS are present, 
+            # even if with None values, if _add_flight_record expects them.
+            # Or, _add_flight_record should be robust enough to handle missing optional keys.
+            # For now, let's assume _add_flight_record will take single_header_data_from_parser
+            # and missing fields (not in parser output but in table schema) will be handled 
+            # by database defaults or become NULL.           
+            # A minimal check for core identifiable info before trying to insert:
+            if not (single_header_data_from_parser.get('airline') and 
+                    single_header_data_from_parser.get('flight_number') and 
+                    single_header_data_from_parser.get('flight_date')):
+                raise ValueError("Essential identifying information (airline, flight_number, flight_date) missing from parsed header.")          
+            # Add inbound_not if it's there, otherwise it should be nullable or have a default in DB
+            # Add departure_airport if it's there
+            # All other fields like arrival_airport, std, etd, atd, sta, eta, ata will be added 
+            # by flight_maintain.py if not present in JCSY parsed output.
+            header_id = self._add_flight_record('jcsy_flights', single_header_data_from_parser)
+        if header_id == 0:
+             raise Exception("Failed to obtain or create a valid header_id for JCSY content processing.")
+        flight_ids=[]
+        flight_ids.append(header_id)       
+        flight_data_list = self._get_data_from_parser('query_flights', self.QUERY_FLIGHT_FIELDS, parser_dict)       
+        for flight_dict in flight_data_list:
+            flight_dict['jcsy_flight_id'] = header_id           
+            # inbound_not comes from the original parsed header data
+            if single_header_data_from_parser.get('inbound_not') == 0:
+                flight_dict['arrival_airport'] = flight_dict.get('departure_airport', '')
+                flight_dict['departure_airport'] = ''           
+            for field in ['booked_count_non_economy', 'booked_count_economy', 
+                          'checked_count_non_economy', 'checked_count_economy',
+                          'check_count_infant', 'bags_count_piece', 'bags_count_weight']:
+                if field in flight_dict and flight_dict[field] is None:
+                    flight_dict[field] = 0           
+            flight_ids.append(self._add_flight_record('query_flights', flight_dict))
+        return flight_ids
+
+
+    def _add_flight_record(self, table_name: str, flight_data: dict) -> int:
+        if table_name not in ['jcsy_flights', 'query_flights']:
+            raise ValueError(f"Invalid table name: {table_name}")
+        valid_fields = {}
+        if table_name == 'jcsy_flights':
+            valid_fields= self.JCSY_FLIGHT_REQUIRED_FIELDS
+        if table_name == 'query_flights':
+            valid_fields= self.QUERY_FLIGHT_REQUIRED_FIELDS
+        # Filter flight_data to include only valid fields for the table
+        # and prepare for SQL insertion (e.g., convert datetime to string if needed)
+        data_to_insert = {}
+        for key, value in flight_data.items():
+            if key in valid_fields:
+                data_to_insert[key] = value
+        if not data_to_insert:
+            raise ValueError("No valid data provided for insertion.")
+        columns = ', '.join(data_to_insert.keys())
+        placeholders = ', '.join(['?' for _ in data_to_insert])
+        query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        try:
+            with self.db: # Assuming self.db is your FlightDatabase instance
+                self.db.cursor.execute(query, list(data_to_insert.values()))
+                self.db.connection.commit()
+                return self.db.cursor.lastrowid
+        except Exception as e:
+            # Consider more specific error handling or logging
+            raise Exception(f"Failed to add record to {table_name}: {str(e)}")     
+
 
     def _get_data_from_parser(self, db_table, field_mapping, parsed_data):
         """
@@ -89,68 +241,9 @@ class FlightAdd:
                 if result:
                     result_list.append(result)
         return result_list
-
-
-    def add_jcsy_content(self, content: str) -> int:   
-        """
-        Parse JCSY format content and add it to the database
-        Args:
-            content: Multi-line string of JCSY content  
-        Raises:
-            Exception: If parsing or database operations fail
-        Returns:
-            The header flight id of the added flight
-        """
-        try:
-            # Parse the content using the configuration-driven parser
-            parsed_data = self.parser.parse_content(content)
-            with self.db:
-                # Process header data
-                header_data = self._get_data_from_parser('jcsy_flights', self.HEADER_FIELDS, parsed_data)
-                if header_data:
-                    query = f'''
-                        INSERT INTO jcsy_flights (
-                            {', '.join(header_data[0].keys())}
-                        ) VALUES (
-                            {', '.join(['?' for _ in header_data[0]])}
-                        )
-                    '''
-                    self.db.cursor.execute(query, list(header_data[0].values()))
-                    header_flight_id = self.db.cursor.lastrowid
-                # Process flight data
-                flight_data = self._get_data_from_parser('query_flights', self.QUERY_FLIGHT_FIELDS, parsed_data)
-                print(f"\nflight_data: {flight_data}")
-                for flight in flight_data:
-                    # Add the header flight reference
-                    flight['jcsy_flight_id'] = header_flight_id
-                    '''Because the jcsy output the arrival airport for listing flights
-                    when the header used the option 'O' that cause is_arrival is zero.
-                    '''
-                    if header_data[0].get('is_arrival') == 0:
-                        flight['arrival_airport'] = flight.get('departure_airport', '')
-                        flight['departure_airport'] = ''
-                    # Convert numeric fields to 0 if None
-                    for field in ['booked_count_non_economy', 'booked_count_economy', 
-                                'checked_count_non_economy', 'checked_count_economy',
-                                'check_count_infant', 'bags_count_piece', 'bags_count_weight']:
-                        if field in flight and flight[field] is None:
-                            flight[field] = 0
-                    # Insert into query_flights table
-                    query = f'''
-                        INSERT INTO query_flights (
-                            {', '.join(flight.keys())}
-                        ) VALUES (
-                            {', '.join(['?' for _ in flight])}
-                        )
-                    '''
-                    self.db.cursor.execute(query, list(flight.values()))
-                self.db.connection.commit()
-                return header_flight_id
-        except Exception as e:
-            raise Exception(f"Failed to add JCSY content: {str(e)}") 
         
 
-    def update_flight_times(self, update_fields: dict):
+    def update_flight(self, update_fields: dict):
         """
         Update the a flight id with the table name in the database if the value is not None.
         the table name and the flight id are required.
