@@ -19,7 +19,7 @@ class FlightGet:
             flight_number = flight_number.zfill(4)
         # Convert datetime to date string in YYYY-MM-DD format
         date_str = flight_date.strftime('%Y-%m-%d')
-        self.db.cursor.execute('SELECT id FROM jcsy_flights WHERE airline = ? AND flight_number = ? AND flight_date = ?', 
+        self.db.cursor.execute(f'SELECT id FROM {table} WHERE airline = ? AND flight_number = ? AND flight_date = ?', 
                              (airline, flight_number, date_str))
         result = self.db.cursor.fetchone()
         if result is None:

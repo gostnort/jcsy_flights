@@ -51,12 +51,13 @@ class MarkdownFormatter:
 
 
     def __init__(self, header_flight_id: int):
-        self.flight_data = {}
-        self.db = FlightGet()
+        self._flight_data = {}
+        self._db = FlightGet()
         src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         config_path = os.path.join(src_dir, "bin", "config", "markdown_config.yaml")
-        self.config = self._load_config(config_path)
+        self._config = self._load_config(config_path)
         self._load_flight_data(header_flight_id)
+        self.markdown = self._get_markdown(header_flight_id)
 
 
     def _load_config(self, config_path):
@@ -68,13 +69,13 @@ class MarkdownFormatter:
             print(f"Error loading markdown config: {str(e)}")
             # Return a default config if loading fails
             return {
-                'header': 'JCSY:{header_airline}{header_flight_number}/{flight_date}/{departure_airport},[header_I_O]',
+                'header': 'JCSY:{header_airline}{header_flight_number}/{flight_date}/{departure_airport},[_header_I_O]',
                 'fields': 'Flight Number|Airport|Delay Mins|Booked Pax|Checked Pax|Bags/Weight',
                 'spaces': ':--------|:-----|:------|-------:|-----------:|--------:',
                 'data': {
                     'Flight Number': '{airline}{flight_number}',
-                    'Airport': '[judge_output_airport]',
-                    'Delay Mins': '[delay_mins]',
+                    'Airport': '[_judge_output_airport]',
+                    'Delay Mins': '[_delay_mins]',
                     'Booked Pax': '{booked_count_non_economy}/{booked_count_economy}',
                     'Checked Pax': '{checked_count_non_economy}/{checked_count_economy}+{check_count_infant}',
                     'Bags/Weight': '{bags_count_piece}/{bag_count_weight}'
@@ -92,14 +93,14 @@ class MarkdownFormatter:
         """
         try:
             # Get the header flight data
-            header_data = self.db.return_flight_data('jcsy_flights', header_flight_id)
+            header_data = self._db.return_flight_data('jcsy_flights', header_flight_id)
             if not header_data:
                 return False
-            related_flight_ids = self.db.return_related_flights_IDs('query_flights', header_flight_id)
+            related_flight_ids = self._db.return_related_flights_IDs('query_flights', header_flight_id)
             # Get related flights
             query_flights = []
             for flight_id in related_flight_ids:
-                query_flights.append(self.db.return_flight_data('query_flights', flight_id))
+                query_flights.append(self._db.return_flight_data('query_flights', flight_id))
             #Prepare query flights data.
             output_query_flights = []
             for flight in query_flights:
@@ -125,7 +126,7 @@ class MarkdownFormatter:
                 output_query_flight['bags_count_weight'] = flight['bags_count_weight']
                 output_query_flights.append(output_query_flight)
             #Store the data with the header and query flights data.
-            self.flight_data = {
+            self._flight_data = {
                 'header_airline': header_data['airline'],
                 'header_flight_number': header_data['flight_number'],
                 'flight_date': header_data['flight_date'],
@@ -163,9 +164,9 @@ class MarkdownFormatter:
                 # Replace function call with result
                 template = template.replace(f"[{func_name}]", str(result))  
         # Handle field placeholders {field_name}
-        if data_index is not None and 'query_flights' in self.flight_data:
+        if data_index is not None and 'query_flights' in self._flight_data:
             # Use query flight data for field substitution
-            query_flight = self.flight_data.get('query_flights')[data_index]
+            query_flight = self._flight_data.get('query_flights')[data_index]
             field_pattern = r'\{([^}]+)\}'
             field_matches = re.findall(field_pattern, template)
             for field_name in field_matches:
@@ -185,7 +186,7 @@ class MarkdownFormatter:
             field_pattern = r'\{([^}]+)\}'
             field_matches = re.findall(field_pattern, template)
             for field_name in field_matches:
-                field_value = self.flight_data.get(field_name, '')
+                field_value = self._flight_data.get(field_name, '')
                 # Format date fields
                 if field_name == 'flight_date' and isinstance(field_value, (date, datetime)):
                     if isinstance(field_value, datetime):
@@ -196,26 +197,26 @@ class MarkdownFormatter:
         return template
     
 
-    def header_I_O(self):
+    def _header_I_O(self):
         """Return 'I' for arrival flights or 'O' for departure flights."""
-        if self.flight_data.get('is_arrival') == 1:
+        if self._flight_data.get('is_arrival') == 1:
             return 'I'
         else:
             return 'O'
 
 
-    def judge_output_airport(self, query_flight_index):
+    def _judge_output_airport(self, query_flight_index):
         """Return the appropriate airport based on arrival/departure status."""
-        if self.flight_data.get('is_arrival') == 1:
-            return self.flight_data.get('query_flights')[query_flight_index].get('arrival_airport')
+        if self._flight_data.get('is_arrival') == 1:
+            return self._flight_data.get('query_flights')[query_flight_index].get('arrival_airport')
         else:
-            return self.flight_data.get('query_flights')[query_flight_index].get('departure_airport')
+            return self._flight_data.get('query_flights')[query_flight_index].get('departure_airport')
         
 
-    def delay_mins(self, query_flight_index):
+    def _delay_mins(self, query_flight_index):
         """Calculate and format delay minutes for the specified flight."""
-        query_flight = self.flight_data.get('query_flights')[query_flight_index]
-        if self.flight_data.get('is_arrival') == 1:
+        query_flight = self._flight_data.get('query_flights')[query_flight_index]
+        if self._flight_data.get('is_arrival') == 1:
             return self._format_time_difference(query_flight.get('eta'), query_flight.get('sta'))
         else:
             return self._format_time_difference(query_flight.get('etd'), query_flight.get('atd'))
@@ -249,10 +250,9 @@ class MarkdownFormatter:
                 return f"{hours}h"
     
 
-    def format_markdown_header(self):
+    def _format_markdown_header(self):
         """
         Format the flight header section as markdown.
-        
         Returns:
             Formatted markdown header string
         """
@@ -265,10 +265,9 @@ class MarkdownFormatter:
         return f"{header}\n\n"
     
 
-    def format_markdown_table(self):
+    def _format_markdown_table(self):
         """
-        Format the flight data as a markdown table.
-        
+        Format the flight data as a markdown table. 
         Returns:
             Formatted markdown table string
         """
@@ -279,7 +278,7 @@ class MarkdownFormatter:
         # Create table header
         table = f"{fields_line}\n{spaces_line}\n"
         # Process each flight in query_flights
-        query_flights = self.flight_data.get('query_flights', [])
+        query_flights = self._flight_data.get('query_flights', [])
         for i, _ in enumerate(query_flights):
             row_cells = []
             # Process each field template
@@ -293,25 +292,22 @@ class MarkdownFormatter:
         return table
     
 
-    def get_markdown(self, flight_id=None):
+    def _get_markdown(self, flight_id:int):
         """
         Generate complete markdown for the specified flight or currently loaded data.
-        
         Args:
             flight_id: Optional flight ID to load data for
-            
         Returns:
             Formatted markdown string for the flight
         """
         # Load data if flight_id is provided
-        if flight_id is not None:
-            if not self._load_flight_data(flight_id):
-                return f"Error: Could not load data for flight ID {flight_id}"
+        if not self._load_flight_data(flight_id):
+            return f"Error: Could not load data for flight ID {flight_id}"
         # Check if we have data to format
         if not self.flight_data:
             return "Error: No flight data loaded"
         # Format the header and table
-        markdown = self.format_markdown_header()
-        markdown += self.format_markdown_table()
+        markdown = self._format_markdown_header()
+        markdown += self._format_markdown_table()
         return markdown
 

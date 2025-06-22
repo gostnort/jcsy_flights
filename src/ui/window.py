@@ -219,6 +219,13 @@ class Window(QWidget):
         self.flight_getter = FlightGet("flight.db")
         # Instantiate ViewModeHandler
         self.view_mode_handler = ViewModeHandler(self.editor, self.viewer, self.flight_getter)
+        
+        # Connect button signals to handlers
+        self.control_panel.btn_import.clicked.connect(self._handle_import)
+        self.control_panel.btn_fresh.clicked.connect(self._handle_fresh)
+        self.control_panel.btn_output.clicked.connect(self._handle_output)
+        self.control_panel.btn_print.clicked.connect(self._handle_print)
+        
         self._handle_mode_change(self._EDIT_MODE) # Ensure editor is shown and preview is initially updated based on default mode
         # Enable mouse tracking for hover detection
         self.setMouseTracking(True)
@@ -251,6 +258,27 @@ class Window(QWidget):
             if not panel._is_expanded: panel.animate_expand()
         else: # Mouse is outside panel and its activation zone
             if panel._is_expanded: panel.animate_collapse()
+
+
+    def _handle_import(self):
+        """Handle Import button click - placeholder for importing flight data"""
+        # TODO: Implement import functionality
+        print("Import button clicked - functionality not yet implemented")
+        
+    def _handle_fresh(self):
+        """Handle Fresh button click - placeholder for refreshing data"""
+        # TODO: Implement fresh/refresh functionality
+        print("Fresh button clicked - functionality not yet implemented")
+        
+    def _handle_output(self):
+        """Handle Output button click - placeholder for exporting data"""
+        # TODO: Implement output/export functionality
+        print("Output button clicked - functionality not yet implemented")
+        
+    def _handle_print(self):
+        """Handle Print button click - placeholder for printing"""
+        # TODO: Implement print functionality
+        print("Print button clicked - functionality not yet implemented")
 
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:

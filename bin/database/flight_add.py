@@ -66,7 +66,9 @@ class FlightAdd:
 
     def __init__(self, config_path: str = 'jcsy_config.yaml'):
         """Initialize with database connection and config parser"""
-        self.db = FlightDatabase()
+        # Use consistent database name - "flight.db" (without 's')
+        self.db_name = "flight.db"
+        self.db = FlightDatabase(self.db_name)
         self.parser = JcsyParser(config_path)
         # Mapping from the db fields key to the parser fields as the value.
         self.HEADER_FIELDS = {
@@ -74,7 +76,9 @@ class FlightAdd:
             'flight_number': 'header_flight_number',
             'flight_date': 'header_flight_date',
             'inbound_not': 'inbound_not',
-            'departure_airport': 'header_airport',
+            # For JCSY format: if inbound_not=1 (inbound), header_airport is arrival
+            # if inbound_not=0 (outbound), header_airport is departure
+            # We'll handle this logic in add_jcsy_content method
         }
         self.QUERY_FLIGHT_FIELDS = {
             'airline': 'airline',
@@ -123,7 +127,7 @@ class FlightAdd:
         if not header_data_list:
             raise ValueError("No header data parsed from JCSY content.")
         single_header_data_from_parser = header_data_list[0] # Data directly from parser
-        flight_get = FlightGet() 
+        flight_get = FlightGet(self.db_name)
         header_id = 0
         try:
             # Attempt to find the flight in the database using key info from parser output
@@ -141,14 +145,21 @@ class FlightAdd:
         # If flight was not found in DB, insert it using only parser data
         if header_id == 0:
             # At this stage, we insert with what the parser gives us.
-            # Other fields (arrival_airport, std, eta, ata etc.) will be null 
-            # if not provided by the parser and will be filled by flight_maintain.py later.
-            # We need to ensure all keys expected by _JCSY_FLIGHT_REQUIRED_FIELDS are present, 
-            # even if with None values, if _add_flight_record expects them.
-            # Or, _add_flight_record should be robust enough to handle missing optional keys.
-            # For now, let's assume _add_flight_record will take single_header_data_from_parser
-            # and missing fields (not in parser output but in table schema) will be handled 
-            # by database defaults or become NULL.           
+            # Handle airport assignment based on inbound/outbound flag
+            header_airport = single_header_data_from_parser.get('header_airport', '')
+            inbound_flag = single_header_data_from_parser.get('inbound_not', 0)
+            
+            if inbound_flag == 1:  # Inbound flight - LAX is arrival, origin is departure
+                single_header_data_from_parser['arrival_airport'] = header_airport
+                single_header_data_from_parser['departure_airport'] = ''  # Will be filled by individual flights
+            else:  # Outbound flight - LAX is departure, destination is arrival  
+                single_header_data_from_parser['departure_airport'] = header_airport
+                single_header_data_from_parser['arrival_airport'] = ''  # Will be filled by individual flights
+            
+            # Remove the header_airport key as it's not a database field
+            if 'header_airport' in single_header_data_from_parser:
+                del single_header_data_from_parser['header_airport']
+            
             # A minimal check for core identifiable info before trying to insert:
             if not (single_header_data_from_parser.get('airline') and 
                     single_header_data_from_parser.get('flight_number') and 
@@ -167,9 +178,21 @@ class FlightAdd:
         for flight_dict in flight_data_list:
             flight_dict['jcsy_flight_id'] = header_id           
             # inbound_not comes from the original parsed header data
-            if single_header_data_from_parser.get('inbound_not') == 0:
-                flight_dict['arrival_airport'] = flight_dict.get('departure_airport', '')
-                flight_dict['departure_airport'] = ''           
+            header_airport = single_header_data_from_parser.get('arrival_airport') or single_header_data_from_parser.get('departure_airport')
+            
+            if single_header_data_from_parser.get('inbound_not') == 1:
+                # Inbound flight: LAX is arrival, individual airports are departures
+                flight_dict['arrival_airport'] = header_airport  # LAX
+                flight_dict['departure_airport'] = flight_dict.get('airport', '')  # Origin airport
+            else:
+                # Outbound flight: LAX is departure, individual airports are arrivals
+                flight_dict['departure_airport'] = header_airport  # LAX
+                flight_dict['arrival_airport'] = flight_dict.get('airport', '')  # Destination airport
+            
+            # Remove the 'airport' key as it's not a database field
+            if 'airport' in flight_dict:
+                del flight_dict['airport']
+                
             for field in ['booked_count_non_economy', 'booked_count_economy', 
                           'checked_count_non_economy', 'checked_count_economy',
                           'check_count_infant', 'bags_count_piece', 'bags_count_weight']:
