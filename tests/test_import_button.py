@@ -14,8 +14,36 @@ from bin.database.flight_db import FlightDatabase
 from bin.config.jcsy_config import JcsyParser # Using the actual parser
 
 # --- Test Data ---
-# This is the content that *should* be in test_jcsy.txt
-# Since we had issues updating the file, we'll define it here for the tests.
+import os
+
+# Define the path to the test data file relative to the test file
+# test_import_button.py is in tests/, test_jcsy.txt is in the root
+_TEST_DIR = os.path.dirname(__file__)
+JCSY_INBOUND_FILE_PATH = os.path.abspath(os.path.join(_TEST_DIR, '..', 'test_jcsy.txt'))
+
+
+@pytest.fixture(scope="module")
+def inbound_jcsy_data() -> tuple[str, str]:
+    """
+    Loads JCSY inbound data template from test_jcsy.txt,
+    replaces date placeholder with current date (DDMMM format),
+    and returns the processed content and the raw date string.
+    """
+    if not os.path.exists(JCSY_INBOUND_FILE_PATH):
+        raise FileNotFoundError(f"Test data file not found: {JCSY_INBOUND_FILE_PATH}")
+
+    # Generate current date in DDMMM format (e.g., 17JUL)
+    # Ensure consistent casing for month (e.g., JUL not Jul)
+    now = datetime.datetime.now()
+    raw_date_str = now.strftime('%d%b').upper() # e.g., 17JUL
+
+    with open(JCSY_INBOUND_FILE_PATH, 'r') as f:
+        template_content = f.read()
+
+    processed_content = template_content.replace("{{FLIGHT_DATE}}", raw_date_str)
+    return processed_content, raw_date_str
+
+# The hardcoded TEST_JCSY_INBOUND_CONTENT will be removed or replaced by the fixture.
 
 def _get_parsed_header_date_for_test(date_str_short: str) -> datetime.date | None:
     """
@@ -34,14 +62,7 @@ def _get_parsed_header_date_for_test(date_str_short: str) -> datetime.date | Non
     except ValueError:
         return None
 
-TEST_JCSY_INBOUND_CONTENT = """JCSY:CA0984/12DEC/LAX,I
-FLT/ORIG   ARVL   BKD     CHK        UCK     NBRD       BAG
-DL0738 /JFK       000/001 000/001+00 000/000 000/000+00 001/0016
-AS2182 /LAS       001/000 001/000+00 000/000 000/000+00 002/0032
-UA8283 /ORD       000/001 000/001+00 000/000 000/000+00 002/0032
-AA3276 /PHL       000/001 000/000+00 000/001 000/000+00 000/0000
-##TOTAL##         005/093 005/091+00 000/002 003/050+00 112/1811
-"""
+# TEST_JCSY_INBOUND_CONTENT was here, now replaced by the inbound_jcsy_content fixture
 
 # Sample JCSY data for an OUTBOUND flight
 # For PEK, O (Outbound from PEK)
@@ -103,13 +124,13 @@ def db_instance():
 
 # --- Test Cases for import_jcsy_data ---
 
-def test_import_inbound_jcsy_data_success(db_instance):
+def test_import_inbound_jcsy_data_success(db_instance, inbound_jcsy_data):
     """Test successful import of valid INBOUND JCSY data."""
-    # Extract header info for cleanup and verification
-    # JCSY:CA0984/12DEC/LAX,I
-    header_airline = "CA"
+    inbound_jcsy_content, raw_date_str = inbound_jcsy_data
+    # Header info now uses dynamic date from fixture
+    header_airline = "CA" # Stays CA0984 for structure
     header_flight_no = "0984"
-    raw_date_str = "12DEC"
+    # raw_date_str is now from inbound_jcsy_data
     flight_date_obj = _get_parsed_header_date_for_test(raw_date_str)
     assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str}"
     header_flight_date_db = flight_date_obj.strftime('%Y-%m-%d')
@@ -117,7 +138,7 @@ def test_import_inbound_jcsy_data_success(db_instance):
     # Clean up any pre-existing data for this flight
     db_instance.delete_jcsy_flight_by_header(header_airline, header_flight_no, header_flight_date_db)
 
-    result = import_jcsy_data(TEST_JCSY_INBOUND_CONTENT)
+    result = import_jcsy_data(inbound_jcsy_content)
 
     assert result["status"] == "success"
     assert "Successfully imported JCSY data" in result["message"]
@@ -138,7 +159,7 @@ def test_import_inbound_jcsy_data_success(db_instance):
         assert jcsy_header_row["inbound_not"] == 1
 
         # Verify query_flights table (check one entry for brevity)
-        # DL0738 /JFK ...
+        # Original first flight: DL0738 /JFK ...
         db.cursor.execute("SELECT * FROM query_flights WHERE jcsy_flight_id=? AND airline=? AND flight_number=?",
                             (jcsy_header_row["id"], "DL", "0738"))
         query_flight_row = db.cursor.fetchone()
@@ -158,13 +179,15 @@ def test_import_inbound_jcsy_data_success(db_instance):
         # Check total number of query flights
         db.cursor.execute("SELECT COUNT(*) FROM query_flights WHERE jcsy_flight_id=?", (jcsy_header_row["id"],))
         count = db.cursor.fetchone()[0]
-        assert count == 4 # DL0738, AS2182, UA8283, AA3276
+        assert count == 5 # DL0738, AS2182, UA8283, AA3276, AA2364
 
-def test_import_inbound_jcsy_data_idempotency(db_instance):
+def test_import_inbound_jcsy_data_idempotency(db_instance, inbound_jcsy_data):
     """Test that importing the same INBOUND JCSY data twice doesn't duplicate or error."""
-    header_airline = "CA"
+    inbound_jcsy_content, raw_date_str = inbound_jcsy_data
+    # Header info now uses dynamic date from fixture
+    header_airline = "CA" # Stays CA0984 for structure
     header_flight_no = "0984"
-    raw_date_str = "12DEC"
+    # raw_date_str is now from inbound_jcsy_data
     flight_date_obj = _get_parsed_header_date_for_test(raw_date_str)
     assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str}"
     header_flight_date_db = flight_date_obj.strftime('%Y-%m-%d')
@@ -172,14 +195,14 @@ def test_import_inbound_jcsy_data_idempotency(db_instance):
     # Clean up before first import
     db_instance.delete_jcsy_flight_by_header(header_airline, header_flight_no, header_flight_date_db)
 
-    result1 = import_jcsy_data(TEST_JCSY_INBOUND_CONTENT)
+    result1 = import_jcsy_data(inbound_jcsy_content)
     assert result1["status"] == "success"
     jcsy_flight_id1 = int(result1["message"].split("Master record ID: ")[1].split(".")[0])
 
     # Attempt to import again
     # The current import_button.py logic will try to insert into jcsy_flights,
     # which has a UNIQUE constraint. This should result in a database error reported by import_jcsy_data.
-    result2 = import_jcsy_data(TEST_JCSY_INBOUND_CONTENT)
+    result2 = import_jcsy_data(inbound_jcsy_content)
     assert result2["status"] == "error" # Expecting an error due to unique constraint
     assert "UNIQUE constraint failed" in result2["message"] # Specific to SQLite
 
@@ -192,7 +215,7 @@ def test_import_inbound_jcsy_data_idempotency(db_instance):
 
         db.cursor.execute("SELECT COUNT(*) FROM query_flights WHERE jcsy_flight_id=?", (jcsy_flight_id1,))
         count_query = db.cursor.fetchone()[0]
-        assert count_query == 4 # Original query flights are still there
+        assert count_query == 5 # Original query flights are still there
 
 def test_import_outbound_jcsy_data_success(db_instance):
     """Test successful import of valid OUTBOUND JCSY data."""
@@ -233,22 +256,27 @@ def test_import_outbound_jcsy_data_success(db_instance):
         assert count == 2
 
 
-def test_import_malformed_jcsy_data(db_instance):
+def test_import_malformed_jcsy_data(db_instance, inbound_jcsy_data):
     """Test import with malformed JCSY data."""
+    _, raw_date_str_dynamic = inbound_jcsy_data # Get the dynamic date string
+
     malformed_content = "JCSY:GARBAGE_DATA"
     result = import_jcsy_data(malformed_content)
     assert result["status"] == "error"
     assert "Failed to parse JCSY header" in result["message"] # Or other relevant parser error
 
-    malformed_content_no_flights = "JCSY:CA0984/12DEC/LAX,I" # Header ok, but no flight lines
+    # Use the dynamic date for this test case as well
+    header_airline = "CA" # Keep structure
+    header_flight_no = "0984"
+    # raw_date_str is now the dynamic one for consistency in this test's scope
+    malformed_content_no_flights = f"JCSY:{header_airline}{header_flight_no}/{raw_date_str_dynamic}/LAX,I" # Header ok, but no flight lines
+
     # Depending on parser leniency, this might be a success with 0 flights or an error.
     # The current JcsyParser seems to allow this.
     # We need to ensure the DB is clean for this specific test.
-    header_airline = "CA"
-    header_flight_no = "0984"
-    raw_date_str = "12DEC" # Matches the date in malformed_content_no_flights
-    flight_date_obj = _get_parsed_header_date_for_test(raw_date_str)
-    assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str}"
+    # Use the dynamic raw_date_str for cleaning up/verifying this specific header
+    flight_date_obj = _get_parsed_header_date_for_test(raw_date_str_dynamic) # Use the dynamic date here
+    assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str_dynamic}"
     header_flight_date_db = flight_date_obj.strftime('%Y-%m-%d')
     db_instance.delete_jcsy_flight_by_header(header_airline, header_flight_no, header_flight_date_db)
 
@@ -276,13 +304,16 @@ def test_import_jcsy_parser_not_initialized():
     ib.jcsy_parser = original_parser # Restore
 
 
-def test_import_flight_db_not_initialized():
+def test_import_flight_db_not_initialized(inbound_jcsy_data): # Use new fixture name
     """Test behavior when FlightDatabase is not initialized (simulated)."""
+    inbound_jcsy_content, _ = inbound_jcsy_data # Unpack, we only need content here
     from src.ui import import_button as ib
     original_db = ib.flight_db
     ib.flight_db = None # Simulate DB not being initialized
 
-    result = import_jcsy_data(TEST_JCSY_INBOUND_CONTENT)
+    # This test primarily checks the guard clause for flight_db,
+    # but it still needs valid JCSY content to pass to the function.
+    result = import_jcsy_data(inbound_jcsy_content)
     assert result["status"] == "error"
     assert "Flight Database not initialized" in result["message"]
 
