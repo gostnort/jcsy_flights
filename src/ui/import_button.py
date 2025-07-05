@@ -4,6 +4,7 @@
 import sys
 import os
 import datetime
+import sqlite3
 
 # Add project root to Python path to allow direct imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))

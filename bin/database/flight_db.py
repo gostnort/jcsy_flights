@@ -62,8 +62,8 @@ class FlightDatabase:
                 airline TEXT NOT NULL,
                 flight_number TEXT NOT NULL,
                 flight_date DATE NOT NULL,
-                departure_airport TEXT NOT NULL,
-                arrival_airport TEXT NOT NULL,
+                departure_airport TEXT,
+                arrival_airport TEXT,
                 std_text TEXT,
                 std DATETIME,
                 etd DATETIME,
@@ -129,3 +129,24 @@ class FlightDatabase:
             ON query_flights(query_timestamp)
             ''')
             self.connection.commit()
+
+    def delete_jcsy_flight_by_header(self, airline: str, flight_number: str, flight_date: str):
+        """
+        Deletes a JCSY flight entry and its associated query_flights
+        based on airline, flight_number, and flight_date.
+        The flight_date should be in 'YYYY-MM-DD' format.
+        """
+        if not self.connection:
+            self.connect()
+        try:
+            self.cursor.execute("""
+                DELETE FROM jcsy_flights
+                WHERE airline = ? AND flight_number = ? AND flight_date = ?
+            """, (airline, flight_number, flight_date))
+            self.connection.commit()
+            # print(f"Deleted {self.cursor.rowcount} JCSY flight entries for {airline}{flight_number} on {flight_date}")
+            return self.cursor.rowcount > 0 # Return True if any row was deleted
+        except sqlite3.Error as e:
+            print(f"Error deleting JCSY flight data: {e}")
+            # self.connection.rollback() # Rollback if commit is managed outside or if an error occurs mid-transaction
+            return False
