@@ -64,20 +64,7 @@ def _get_parsed_header_date_for_test(date_str_short: str) -> datetime.date | Non
 
 # TEST_JCSY_INBOUND_CONTENT was here, now replaced by the inbound_jcsy_content fixture
 
-# Sample JCSY data for an OUTBOUND flight
-# For PEK, O (Outbound from PEK)
-# Date: 15th August of current year
-current_year = datetime.date.today().year
-outbound_flight_date_str = f"{current_year}-08-15"
-outbound_flight_date_jcsy = f"15AUG"
-
-TEST_JCSY_OUTBOUND_CONTENT = f"""JCSY:MU5183/{outbound_flight_date_jcsy}/PEK,O
-FLT/DEST   DEPT   BKD     CHK        UCK     NBRD       BAG
-CZ3101 /CAN       001/002 001/002+00 000/000 000/000+00 003/0060
-CA1831 /SHA       000/005 000/005+00 000/000 000/000+00 005/0100
-##TOTAL##         001/007 001/007+00 000/000 000/000+00 008/0160
-"""
-
+# TEST_JCSY_OUTBOUND_CONTENT and its related date variables were here and are now removed.
 
 # --- Fixtures ---
 @pytest.fixture(scope="function")
@@ -217,44 +204,7 @@ def test_import_inbound_jcsy_data_idempotency(db_instance, inbound_jcsy_data):
         count_query = db.cursor.fetchone()[0]
         assert count_query == 5 # Original query flights are still there
 
-def test_import_outbound_jcsy_data_success(db_instance):
-    """Test successful import of valid OUTBOUND JCSY data."""
-    header_airline = "MU"
-    header_flight_no = "5183"
-    header_flight_date_db = outbound_flight_date_str # YYYY-MM-DD
-
-    db_instance.delete_jcsy_flight_by_header(header_airline, header_flight_no, header_flight_date_db)
-    result = import_jcsy_data(TEST_JCSY_OUTBOUND_CONTENT)
-
-    assert result["status"] == "success"
-    jcsy_flight_id = result["message"].split("Master record ID: ")[1].split(".")[0]
-
-    with db_instance as db:
-        db.cursor.execute("SELECT * FROM jcsy_flights WHERE id=?", (jcsy_flight_id,))
-        jcsy_header_row = db.cursor.fetchone()
-        assert jcsy_header_row is not None
-        assert jcsy_header_row["airline"] == header_airline
-        assert jcsy_header_row["flight_number"] == header_flight_no
-        assert jcsy_header_row["flight_date"] == header_flight_date_db
-        assert jcsy_header_row["departure_airport"] == "PEK" # Outbound
-        assert jcsy_header_row["arrival_airport"] is None
-        assert jcsy_header_row["inbound_not"] == 0 # 0 for Outbound 'O'
-
-        # Verify a query flight (e.g., CZ3101 /CAN)
-        db.cursor.execute("SELECT * FROM query_flights WHERE jcsy_flight_id=? AND airline=? AND flight_number=?",
-                            (jcsy_flight_id, "CZ", "3101"))
-        query_flight_row = db.cursor.fetchone()
-        assert query_flight_row is not None
-        assert query_flight_row["departure_airport"] == "PEK" # Origin from header
-        assert query_flight_row["arrival_airport"] == "CAN"   # Destination for this segment
-        assert query_flight_row["flight_date"] == header_flight_date_db
-        assert query_flight_row["booked_count_economy"] == 2
-        assert query_flight_row["std_text"] == "" # Not in this JCSY format, parser returns empty string
-
-        db.cursor.execute("SELECT COUNT(*) FROM query_flights WHERE jcsy_flight_id=?", (jcsy_flight_id,))
-        count = db.cursor.fetchone()[0]
-        assert count == 2
-
+# The test_import_outbound_jcsy_data_success function was here and is now removed.
 
 def test_import_malformed_jcsy_data(db_instance, inbound_jcsy_data):
     """Test import with malformed JCSY data."""
