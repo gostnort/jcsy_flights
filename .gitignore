@@ -29,5 +29,4 @@ build/
 Thumbs.db 
 
 *.db
-test*.py
 sample*.txt
