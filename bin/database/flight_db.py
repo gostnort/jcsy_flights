@@ -10,6 +10,7 @@ class FlightDatabase:
             self.db_path = os.path.join(src_dir, "src", "database", "flights.db")
         else:
             self.db_path = os.path.join(src_dir, "src", "database", db_name)
+        self.db_name = db_name # Store the db_name for potential use by tests
         self.connection = None
         self.cursor = None
         if not os.path.exists(self.db_path):
@@ -49,7 +50,12 @@ class FlightDatabase:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
-        self.close()
+        if self.connection: # Ensure connection exists before trying to commit/rollback
+            if exc_type is None: # No exception
+                self.connection.commit()
+            else: # An exception occurred
+                self.connection.rollback()
+        self.close() # Always close
 
 
     def initialize_database(self):

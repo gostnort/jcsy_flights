@@ -92,6 +92,7 @@ def import_jcsy_data(jcsy_text_content: str):
 
         header = parsed_data.get('header')
         flight_entries_dict = parsed_data.get('flight', {}) # It's a dict like {"flight_0": ..., "flight_1": ...}
+        # print(f"DEBUG: Number of flight entries parsed: {len(flight_entries_dict)}") # Removed temporary debug print
 
         if not header:
             return {"status": "error", "message": "Failed to parse JCSY header."}

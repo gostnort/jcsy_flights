@@ -105,30 +105,50 @@ def _get_flights_to_refresh(db_cursor, header_details: dict | None) -> list[dict
     """
     flights_to_check = []
     if header_details:
-        # Query for a specific flight based on header_details
-        # This needs to join jcsy_flights and query_flights
-        # SQL needs to be specific about which airport (departure/arrival) in jcsy_flights
-        # matches header_details['airport'] based on inbound/outbound flag.
-        # For simplicity now, let's assume we match on airline, number, date primarily.
-        # The header_details['airport'] might be used to disambiguate if needed.
-        sql = """
-            SELECT qf.*, jf.inbound_not, jf.departure_airport as jf_dep, jf.arrival_airport as jf_arr
-            FROM query_flights qf
-            JOIN jcsy_flights jf ON qf.jcsy_flight_id = jf.id
-            WHERE qf.airline = ? AND qf.flight_number = ? AND qf.flight_date = ?
-        """
-        # Potentially add: AND (jf.departure_airport = ? OR jf.arrival_airport = ?)
-        # depending on how header_details['airport'] should be used.
-        db_cursor.execute(sql, (
+        # 1. Find the jcsy_flights record based on header.
+        find_jcsy_sql = "SELECT id FROM jcsy_flights WHERE airline = ? AND flight_number = ? AND flight_date = ?"
+        # Optional: Add airport matching if header_details['airport'] is crucial for identifying
+        # the correct jcsy_flights record, e.g., if the same flight number/date can exist for different routes.
+        # For now, assuming airline, flight_number, and date are unique enough for jcsy_flights.
+        # if header_details.get('airport'):
+        #     # This part needs careful consideration of whether header_airport is dep or arr for jcsy_flights
+        #     # and if jcsy_flights even stores both.
+        #     # find_jcsy_sql += " AND (departure_airport = ? OR arrival_airport = ?)"
+        #     db_cursor.execute(find_jcsy_sql, (
+        #         header_details['airline'], header_details['flight_number'],
+        #         header_details['date'].strftime('%Y-%m-%d'),
+        #         header_details['airport'], header_details['airport']
+        #     ))
+        # else:
+        db_cursor.execute(find_jcsy_sql, (
             header_details['airline'],
             header_details['flight_number'],
             header_details['date'].strftime('%Y-%m-%d')
         ))
-        row = db_cursor.fetchone()
-        if row:
+        jcsy_record = db_cursor.fetchone()
+
+        if not jcsy_record:
+            return "Flight not found based on header."
+
+        jcsy_flight_id = jcsy_record['id']
+
+        # 2. Fetch all query_flights for that jcsy_flight_id.
+        # The original join with jcsy_flights is still useful to get jf.inbound_not etc.
+        sql_segments = """
+            SELECT qf.*, jf.inbound_not, jf.departure_airport as jf_dep, jf.arrival_airport as jf_arr
+            FROM query_flights qf
+            JOIN jcsy_flights jf ON qf.jcsy_flight_id = jf.id
+            WHERE qf.jcsy_flight_id = ?
+        """
+        db_cursor.execute(sql_segments, (jcsy_flight_id,))
+        for row in db_cursor.fetchall():
             flights_to_check.append(dict(row))
-        else:
-            return "Flight not found based on header." # Special return type
+
+        if not flights_to_check:
+            # This case implies a jcsy_flights record exists but has no query_flights segments.
+            # This could be valid (e.g., a cancelled flight with no segments listed) or an import issue.
+            # For refresh purposes, it means no segments to refresh.
+            return "No segments found for the specified flight header."
     else:
         # Query for today's flights
         today_date_str = datetime.date.today().strftime('%Y-%m-%d')
@@ -170,7 +190,14 @@ def _update_flight_in_db(db_connection, query_flight_id: int, crawler_data: Craw
         value = getattr(crawler_data, field, None)
         if value is not None: # Only update if crawler provided a value (None means not available from crawler)
             set_clauses.append(f"{field} = ?")
-            values.append(value)
+            # Ensure datetime objects are converted to ISO format strings for database insertion
+            if isinstance(value, (datetime.datetime, datetime.date)):
+                # Match the format used in test assertions, e.g., 'YYYY-MM-DD HH:MM:SS'
+                # Ensure that the timespec matches what's expected if sub-second precision matters.
+                # Using 'seconds' for simplicity as seen in test assertions.
+                values.append(value.isoformat(sep=' ', timespec='seconds'))
+            else:
+                values.append(value)
 
     if not set_clauses:
         print(f"No valid time data from crawler to update for query_flight_id {query_flight_id}")
