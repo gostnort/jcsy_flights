@@ -271,7 +271,7 @@ def refresh_flight_data(header_text: str | None = None) -> str:
             # Pass the global (and potentially test-patched) flight_db instance to the thread.
             thread = threading.Thread(
                 target=_process_single_flight_refresh,
-                args=(flight_db, flight_info, results_log) # Pass flight_db
+                args=(flight_info, results_log) # Reverted: Do not pass flight_db directly
             )
             active_threads.append(thread)
             thread.start()
@@ -288,10 +288,9 @@ def refresh_flight_data(header_text: str | None = None) -> str:
     return f"Refresh process completed for {len(flights_to_actually_refresh)} flight(s). Results: {'; '.join(results_log)}"
 
 
-def _process_single_flight_refresh(active_flight_db: FlightDatabase, flight_info: dict, results_log: list):
+def _process_single_flight_refresh(flight_info: dict, results_log: list): # Reverted signature
     """
     Handles crawling and DB update for a single flight. Runs in a thread.
-    active_flight_db: The FlightDatabase instance to use for DB operations.
     flight_info: A dict from _get_flights_to_refresh.
     results_log is a shared list to append status messages.
     """
@@ -347,19 +346,12 @@ def _process_single_flight_refresh(active_flight_db: FlightDatabase, flight_info
         pass
 
     if crawled_data: # This will be a CrawlerReturnStructure instance
-        # temp_db = FlightDatabase() # REMOVED: No longer creating a new DB instance here.
+        thread_local_db = FlightDatabase() # Each thread gets its own DB connection instance.
+                                      # The test patch mocker.patch('src.ui.refresh_button.FlightDatabase', ...)
+                                      # will ensure this uses the correct test DB file name.
         try:
-            # Use the passed-in active_flight_db.
-            # _update_flight_in_db expects a connection object.
-            # We need to ensure the connection from active_flight_db is valid and used.
-            # Using 'with active_flight_db' ensures connect/close are handled if this
-            # thread is the sole manager or if FlightDatabase's connect/close are thread-safe/reentrant.
-            # Given SQLite's default single-writer behavior, sharing a connection across threads
-            # for writes needs care. However, the test setup uses one connection per test.
-            # The main concern is that active_flight_db.connection is the correct, live one.
-            with active_flight_db as db_for_update: # Use context manager for safety
+            with thread_local_db as db_for_update: # Manages connect/close for this thread's DB interaction
                  _update_flight_in_db(db_for_update.connection, qf_id, crawled_data)
-
             msg = f"Flight {airline}{flight_number} (QFID: {qf_id}): Updated with data."
             print(msg)
             results_log.append(msg)
@@ -368,9 +360,10 @@ def _process_single_flight_refresh(active_flight_db: FlightDatabase, flight_info
             msg = f"Flight {airline}{flight_number} (QFID: {qf_id}): DB update failed - {e}"
             print(msg)
             results_log.append(msg)
-        # finally: # No longer managing temp_db here
-            # if temp_db.connection:
-            #     temp_db.close()
+        finally:
+            # Ensure the thread-local connection is closed even if 'with' block fails unexpectedly before __exit__
+            if thread_local_db and thread_local_db.connection:
+                thread_local_db.close()
     else:
         msg = f"Flight {airline}{flight_number} (QFID: {qf_id}): Both crawlers failed or returned no data."
         print(msg)

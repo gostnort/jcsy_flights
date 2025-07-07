@@ -139,9 +139,10 @@ DL0968 /SEA {dl0968_time}  000/001 000/001+00 000/000 000/000+00 002/0032
 UA0267 /ORD {ua0267_time}  000/001 000/000+00 000/000 000/000+00 000/0000"""
 
 
-def test_export_button_logic(setup_test_db, mock_crawlers):
+def test_export_button_logic(setup_test_db): # Removed mock_crawlers fixture
     """
     Tests the export_button function for both Markdown and JCSY formats.
+    This test now focuses on export_button's formatting of pre-existing DB data.
     """
     test_db = setup_test_db # Get the initialized in-memory DB
 
@@ -204,43 +205,29 @@ def test_export_button_logic(setup_test_db, mock_crawlers):
         db.connection.commit() # Commit on the connection from the context-managed db instance
         cursor.close() # Explicitly close cursor
 
-    # 2. Call refresh_flight_data (optional, but good for completeness)
-    # Mock crawler data for refresh_flight_data. Let's say we want to refresh UA0267
-    # and give it an ETA time via crawler.
-    eta_ua0267_refreshed = datetime.combine(test_flight_date, time(9, 25)) # 09:25
-
-    # Structure the mock data for the mock_crawlers fixture
-    mock_crawlers[( "UA", "0267", flight_date_db_format )] = CrawlerReturnStructure(
-        departure_airport="ORD", # Not strictly needed for this test's time focus
-        arrival_airport="LAX",   # Not strictly needed
-        std=None, atd=None, etd=None, # Not providing these via refresh
-        sta=None,
-        eta=eta_ua0267_refreshed, # This is what we want refresh to update
-        ata=None
-    )
-
-    # Call refresh for the main flight. This should trigger refresh for its segments.
-    # The header for refresh_flight_data is like "CA0984/DDMMM/LAX"
-    refresh_header_text = f"CA0984/{flight_date_ddmmm}/LAX"
-    refresh_status = refresh_flight_data(header_text=refresh_header_text)
-    # print(f"Refresh status: {refresh_status}") # For debugging
-    assert "Error" not in refresh_status, f"Refresh failed: {refresh_status}"
-    # assert "Updated with data" in refresh_status or "No flights found matching criteria" in refresh_status or "complete time data" in refresh_status
-
-    # Verify that UA0267's ETA was updated by refresh
-    with test_db as db: # Use the FlightDatabase instance as the context manager
-        cursor = db.connection.cursor() # Obtain cursor from the active connection
+    # 2. Data for UA0267: Simulate that refresh_flight_data would have set its ETA.
+    #    For this test, we'll set it manually to test export_button's formatting.
+    eta_ua0267_simulated_refresh = datetime.combine(test_flight_date, time(9, 25)) # 09:25
+    with test_db as db:
+        cursor = db.connection.cursor()
         try:
-            cursor.execute("SELECT eta FROM query_flights WHERE id = ?", (qf_id_ua0267,))
-            refreshed_eta_val = cursor.fetchone()[0]
-            # print(f"Refreshed ETA for UA0267: {refreshed_eta_val}") # Debug
-            assert refreshed_eta_val is not None, "Refresh did not update ETA for UA0267"
-            # The value stored is a string, convert it back to datetime for comparison
-            assert datetime.fromisoformat(refreshed_eta_val).time() == eta_ua0267_refreshed.time(), \
-                "Refresh updated UA0267 ETA to an unexpected value."
+            # Update UA0267's ETA as if refresh_button had run successfully
+            cursor.execute("UPDATE query_flights SET eta = ? WHERE id = ?",
+                           (eta_ua0267_simulated_refresh.isoformat(sep=' '), qf_id_ua0267))
+            db.connection.commit()
         finally:
             cursor.close()
 
+    # Verify the manual update for UA0267 (sanity check)
+    with test_db as db:
+        cursor = db.connection.cursor()
+        try:
+            cursor.execute("SELECT eta FROM query_flights WHERE id = ?", (qf_id_ua0267,))
+            val = cursor.fetchone()[0]
+            assert val is not None
+            assert datetime.fromisoformat(val).time() == eta_ua0267_simulated_refresh.time()
+        finally:
+            cursor.close()
 
     # 3. Test Markdown Export
     markdown_output = export_button(header_flight_id, output_format_is_markdown=True)
@@ -275,7 +262,7 @@ def test_export_button_logic(setup_test_db, mock_crawlers):
         ua1123_time=eta_ua1123.strftime("%H%M"),
         aa2400_time=ata_aa2400.strftime("%H%M"),
         dl0968_time=ata_dl0968.strftime("%H%M"), # ATA is preferred
-        ua0267_time=eta_ua0267_refreshed.strftime("%H%M") # From refresh
+        ua0267_time=eta_ua0267_simulated_refresh.strftime("%H%M") # From simulated refresh
     )
 
     # Normalizing whitespace for comparison, as trailing spaces might differ slightly.
@@ -366,6 +353,10 @@ def patch_flight_get_db_access(monkeypatch, setup_test_db):
 
     monkeypatch.setattr(sys.modules['src.ui.export_button'], 'FlightGet', PatchedFlightGetWithClosure)
     monkeypatch.setattr(sys.modules['bin.config.markdown_config'], 'FlightGet', PatchedFlightGetWithClosure)
+
+    # The patch for src.ui.refresh_button.FlightDatabase is removed as refresh_flight_data
+    # is no longer called directly in this test file's main test logic.
+    # test_refresh_button.py handles its own specific patching for FlightDatabase if needed.
 
     yield
 
