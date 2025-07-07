@@ -30,3 +30,6 @@ Thumbs.db
 
 *.db
 sample*.txt
+
+# Ignore erroneously created ":memory:" path in src/database
+src/database/:memory:
