@@ -19,21 +19,47 @@ class FlightGet:
             flight_number = flight_number.zfill(4)
         # Convert datetime to date string in YYYY-MM-DD format
         date_str = flight_date.strftime('%Y-%m-%d')
+        self.db.connect() # Ensure connection and cursor are active
         self.db.cursor.execute(f'SELECT id FROM {table} WHERE airline = ? AND flight_number = ? AND flight_date = ?', 
                              (airline, flight_number, date_str))
         result = self.db.cursor.fetchone()
         if result is None:
-            raise ValueError(f"No flight found for {airline} {flight_number} on {flight_date}")
-        return result
+            # Consider if raising an error or returning None/empty is more appropriate.
+            # For an ID lookup, an error might be fine if ID is expected to exist.
+            # For consistency with other methods, let's make it return None or print an error.
+            print(f"No flight ID found for {airline} {flight_number} on {flight_date} in table {table}")
+            return None # Or raise ValueError as before, depending on desired contract
+        return result # result is already a Row object, can be dict(result) if needed by caller, or just result[0] for ID.
+                      # The original code implies it returns a tuple/row with one element (the ID).
     
 
     def return_related_flights_IDs(self, table:str, header_flight_id:int) -> list[int]:
-        self.db.cursor.execute('SELECT id FROM query_flights WHERE jcsy_flight_id = ?', (header_flight_id,))
-        return [row[0] for row in self.db.cursor.fetchall()]
+        self.db.connect() # Ensure connection and cursor are active
+        # 'table' parameter is not used in the original query 'SELECT id FROM query_flights...'
+        # Assuming it should be query_flights or the table param should be used.
+        # For now, keeping original query structure but using the passed table name.
+        # If 'table' is always 'query_flights' for this method, it can be hardcoded.
+        # Let's assume the query should use the 'table' parameter if it's meant to be flexible.
+        # Original: self.db.cursor.execute('SELECT id FROM query_flights WHERE jcsy_flight_id = ?', (header_flight_id,))
+        actual_table_to_query = 'query_flights' # Defaulting to original, ignoring 'table' param for this specific query logic
+        if table != 'query_flights':
+            print(f"Warning: return_related_flights_IDs called with table='{table}', but currently hardcoded to query 'query_flights'.")
+
+        self.db.cursor.execute(f'SELECT id FROM {actual_table_to_query} WHERE jcsy_flight_id = ?', (header_flight_id,))
+        rows = self.db.cursor.fetchall()
+        if not rows:
+            print(f"No related flights found for header ID {header_flight_id} in table {actual_table_to_query}")
+            return []
+        return [row[0] for row in rows] # row[0] because sqlite.Row can be accessed by index for single column select
     
 
     def return_flight_data(self, table: str, id: int) -> dict:
+        self.db.connect() # Ensure connection and cursor are active
         # Make sure 'table' is a trusted value!
         query = f"SELECT * FROM {table} WHERE id = ?"
         self.db.cursor.execute(query, (id,))
-        return self.db.cursor.fetchone()
+        row = self.db.cursor.fetchone()
+        if row is None:
+            print(f"Error loading flight data: No item with that key for table {table}, id {id}")
+            return None
+        return dict(row) # Convert sqlite.Row to dict

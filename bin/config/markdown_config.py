@@ -108,17 +108,31 @@ class MarkdownFormatter:
                 output_query_flight = self.QUERY_FLIGHT_DATA_STRUCTURE
                 output_query_flight['airline'] = flight['airline']
                 output_query_flight['flight_number'] = flight['flight_number']
-                output_query_flight['flight_date'] = flight['flight_date']
-                output_query_flight['departure_airport'] = flight['departure_airport']
-                output_query_flight['arrival_airport'] = flight['arrival_airport']
-                output_query_flight['std'] = flight['std']
-                output_query_flight['etd'] = flight['etd']
-                output_query_flight['atd'] = flight['atd']
-                output_query_flight['sta'] = flight['sta']
-                output_query_flight['eta'] = flight['eta']
-                output_query_flight['ata'] = flight['ata']
-                output_query_flight['booked_count_non_economy'] = flight['booked_count_non_economy']
-                output_query_flight['booked_count_economy'] = flight['booked_count_economy']
+                output_query_flight['flight_date'] = flight.get('flight_date') # Use .get for safety
+                output_query_flight['departure_airport'] = flight.get('departure_airport')
+                output_query_flight['arrival_airport'] = flight.get('arrival_airport')
+
+                # Helper to parse string timestamps from DB to datetime objects
+                def parse_datetime_optional(dt_val):
+                    if not dt_val:
+                        return None
+                    if isinstance(dt_val, datetime): # Already a datetime object
+                        return dt_val
+                    try:
+                        # Assuming 'YYYY-MM-DD HH:MM:SS' or similar ISO format from DB
+                        return datetime.fromisoformat(str(dt_val))
+                    except (ValueError, TypeError):
+                        # print(f"Warning: Could not parse datetime string '{dt_val}'")
+                        return None
+
+                output_query_flight['std'] = parse_datetime_optional(flight.get('std'))
+                output_query_flight['etd'] = parse_datetime_optional(flight.get('etd'))
+                output_query_flight['atd'] = parse_datetime_optional(flight.get('atd'))
+                output_query_flight['sta'] = parse_datetime_optional(flight.get('sta'))
+                output_query_flight['eta'] = parse_datetime_optional(flight.get('eta'))
+                output_query_flight['ata'] = parse_datetime_optional(flight.get('ata'))
+                output_query_flight['booked_count_non_economy'] = flight.get('booked_count_non_economy')
+                output_query_flight['booked_count_economy'] = flight.get('booked_count_economy')
                 output_query_flight['checked_count_non_economy'] = flight['checked_count_non_economy']
                 output_query_flight['checked_count_economy'] = flight['checked_count_economy']
                 output_query_flight['check_count_infant'] = flight['check_count_infant']
@@ -127,16 +141,21 @@ class MarkdownFormatter:
                 output_query_flights.append(output_query_flight)
             #Store the data with the header and query flights data.
             self._flight_data = {
-                'header_airline': header_data['airline'],
-                'header_flight_number': header_data['flight_number'],
-                'flight_date': header_data['flight_date'],
-                'departure_airport': header_data['departure_airport'],
-                'is_arrival': header_data['is_arrival'],
+                'header_airline': header_data.get('airline'), # Use .get for all header_data access
+                'header_flight_number': header_data.get('flight_number'),
+                'flight_date': header_data.get('flight_date'),
+                'departure_airport_header': header_data.get('departure_airport'), # Store raw departure_airport from jcsy_flights
+                'arrival_airport_header': header_data.get('arrival_airport'),     # Store raw arrival_airport from jcsy_flights
+                'is_arrival': header_data.get('inbound_not'),
                 'query_flights': output_query_flights
             }
+            # Ensure 'is_arrival' is not None if 'inbound_not' was missing, default to 0 (outbound)
+            if self._flight_data.get('is_arrival') is None: # Use .get here too
+                print("Warning: 'inbound_not' missing from header_data, defaulting 'is_arrival' to 0 (outbound).")
+                self._flight_data['is_arrival'] = 0
             return True
         except Exception as e:
-            print(f"Error loading flight data: {str(e)}")
+            print(f"Error loading flight data in MarkdownFormatter: {str(e)}")
             return False
 
 
@@ -211,6 +230,13 @@ class MarkdownFormatter:
             return self._flight_data.get('query_flights')[query_flight_index].get('arrival_airport')
         else:
             return self._flight_data.get('query_flights')[query_flight_index].get('departure_airport')
+
+    def _get_header_station_airport(self):
+        """Return the correct station airport for the header based on inbound/outbound status."""
+        if self._flight_data.get('is_arrival') == 1: # is_arrival is based on inbound_not
+            return self._flight_data.get('arrival_airport_header', '') # Use the stored arrival_airport from jcsy_flights
+        else:
+            return self._flight_data.get('departure_airport_header', '') # Use the stored departure_airport from jcsy_flights
         
 
     def _delay_mins(self, query_flight_index):
@@ -232,6 +258,9 @@ class MarkdownFormatter:
             Formatted string showing the time difference (e.g., "15m" or "2h5m")
             The minus time won't be shown(e.g., "").
         """
+        if not time1 or not time2: # Check if either input is None (or otherwise falsy)
+            return ""
+
         # Calculate difference in minutes
         diff_seconds = (time1 - time2).total_seconds()
         diff_minutes = int(diff_seconds / 60)
@@ -256,7 +285,7 @@ class MarkdownFormatter:
         Returns:
             Formatted markdown header string
         """
-        header_template = self.config.get('header', '')
+        header_template = self._config.get('header', '') # Changed self.config to self._config
         # Add the heading level ## if not in template
         if not header_template.startswith('#'):
             header_template = f"## {header_template}"
@@ -272,9 +301,9 @@ class MarkdownFormatter:
             Formatted markdown table string
         """
         # Get field names and alignment from config
-        fields_line = self.config.get('fields', '')
-        spaces_line = self.config.get('spaces', '')
-        data_config = self.config.get('data', {})
+        fields_line = self._config.get('fields', '') # Changed self.config to self._config
+        spaces_line = self._config.get('spaces', '') # Changed self.config to self._config
+        data_config = self._config.get('data', {})   # Changed self.config to self._config
         # Create table header
         table = f"{fields_line}\n{spaces_line}\n"
         # Process each flight in query_flights
@@ -301,10 +330,11 @@ class MarkdownFormatter:
             Formatted markdown string for the flight
         """
         # Load data if flight_id is provided
-        if not self._load_flight_data(flight_id):
+        if not self._load_flight_data(flight_id): # This call is redundant if __init__ already called it.
+                                                 # Consider removing if __init__ guarantees _flight_data state.
             return f"Error: Could not load data for flight ID {flight_id}"
         # Check if we have data to format
-        if not self.flight_data:
+        if not self._flight_data: # Corrected to use self._flight_data
             return "Error: No flight data loaded"
         # Format the header and table
         markdown = self._format_markdown_header()

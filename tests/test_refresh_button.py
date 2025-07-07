@@ -99,9 +99,9 @@ def test_refresh_data_success(jcsy_data_for_refresh_test, refresh_db_instance, m
     db = refresh_db_instance
 
     # --- Arrange: Import data ---
-    # The JCSY header in test_jcsy.txt is CA0988/.../LAX,I
+    # The JCSY header in test_jcsy.txt is CA0984/.../LAX,I (from fixture)
     header_airline = "CA"
-    header_flight_no = "0988" # JcsyParser removes leading zeros if any, but test_jcsy.txt has 0988
+    header_flight_no = "0984" # Aligning with test_jcsy.txt content
     header_airport = "LAX"
     header_inbound_flag = "I" # Inbound
 
@@ -109,11 +109,11 @@ def test_refresh_data_success(jcsy_data_for_refresh_test, refresh_db_instance, m
     assert import_result["status"] == "success", f"Import failed: {import_result['message']}"
     jcsy_master_id = int(import_result["message"].split("Master record ID: ")[1].split(".")[0])
 
-    # Verify import for a specific segment that will be refreshed (e.g., the first one: DL1728 /BOS)
-    # For an inbound flight (LAX arrival), the segment "DL1728 /BOS" means DL1728 from BOS to LAX.
-    segment_airline = "DL"
-    segment_flight_no = "1728"
-    segment_origin_airport = "BOS" # From the flight line
+    # Verify import for a specific segment that will be refreshed (e.g., the first one: UA1123 /SFO from test_jcsy.txt)
+    # For an inbound flight (LAX arrival), the segment "UA1123 /SFO" means UA1123 from SFO to LAX.
+    segment_airline = "UA"
+    segment_flight_no = "1123"
+    segment_origin_airport = "SFO" # From the flight line
     segment_dest_airport = header_airport # From the header (LAX)
 
     with db: # Use the FlightDatabase instance as a context manager
@@ -252,16 +252,16 @@ def test_refresh_flight_already_has_data(jcsy_data_for_refresh_test, refresh_db_
     db = refresh_db_instance
 
     header_airline = "CA"
-    header_flight_no = "0988"
+    header_flight_no = "0984" # Aligning with test_jcsy.txt content
     header_airport = "LAX"
 
     import_result = import_button.import_jcsy_data(processed_jcsy_content)
     assert import_result["status"] == "success"
     jcsy_master_id = int(import_result["message"].split("Master record ID: ")[1].split(".")[0])
 
-    # Pick a segment, e.g., DL1728
-    segment_airline = "DL"
-    segment_flight_no = "1728"
+    # Pick a segment, e.g., UA1123 from test_jcsy.txt
+    segment_airline = "UA"
+    segment_flight_no = "1123"
     tomorrow_str_ymd = tomorrow_date_obj.strftime('%Y-%m-%d')
     # Manually update this segment to have complete time data
     with db: # Use the FlightDatabase instance as a context manager

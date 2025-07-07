@@ -115,9 +115,9 @@ def test_import_inbound_jcsy_data_success(db_instance, inbound_jcsy_data):
     """Test successful import of valid INBOUND JCSY data."""
     inbound_jcsy_content, raw_date_str = inbound_jcsy_data
     # Header info now uses dynamic date from fixture
-    # test_jcsy.txt uses CA0988
+    # test_jcsy.txt uses CA0984 (as per file content)
     header_airline = "CA"
-    header_flight_no = "0988" # Corrected from "0984" to match test_jcsy.txt
+    header_flight_no = "0984" # Aligning with test_jcsy.txt content
     # raw_date_str is now from inbound_jcsy_data
     flight_date_obj = _get_parsed_header_date_for_test(raw_date_str)
     assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str}"
@@ -147,12 +147,12 @@ def test_import_inbound_jcsy_data_success(db_instance, inbound_jcsy_data):
         assert jcsy_header_row["inbound_not"] == 1
 
         # Verify query_flights table (check one entry for brevity)
-            # First flight in test_jcsy.txt is DL1728 /BOS ...
+        # First flight in test_jcsy.txt is UA1123 /SFO
         db.cursor.execute("SELECT * FROM query_flights WHERE jcsy_flight_id=? AND airline=? AND flight_number=?",
-                                (jcsy_header_row["id"], "DL", "1728")) # Corrected "0738" to "1728"
+                                (jcsy_header_row["id"], "UA", "1123"))
         query_flight_row = db.cursor.fetchone()
         assert query_flight_row is not None
-        assert query_flight_row["departure_airport"] == "BOS" # Corrected from JFK - DL1728 is from BOS
+        assert query_flight_row["departure_airport"] == "SFO"
         assert query_flight_row["arrival_airport"] == "LAX"   # Destination from header
         assert query_flight_row["flight_date"] == header_flight_date_db
         assert query_flight_row["booked_count_non_economy"] == 0
@@ -162,21 +162,26 @@ def test_import_inbound_jcsy_data_success(db_instance, inbound_jcsy_data):
         assert query_flight_row["check_count_infant"] == 0 # from +00
         assert query_flight_row["bags_count_piece"] == 1
         assert query_flight_row["bags_count_weight"] == 16
-        assert query_flight_row["std_text"] == "" # Not in this JCSY format's flight lines, parser returns empty string
+        # std_text from test_jcsy.txt for UA1123 is empty, parser might return empty string or None.
+        # import_button.py saves flight_data.get('std_text') which defaults to None if key missing,
+        # or actual value from parser. JcsyParser for this format sets std_text from a slice.
+        # Let's assume it results in an empty string if no time is present in the input line.
+        assert query_flight_row["std_text"] == ""
+
 
         # Check total number of query flights
         db.cursor.execute("SELECT COUNT(*) FROM query_flights WHERE jcsy_flight_id=?", (jcsy_header_row["id"],))
         count = db.cursor.fetchone()[0]
-        # Parser currently returns 3 segments for test_jcsy.txt
-        assert count == 3
+        # test_jcsy.txt has 4 flight segments
+        assert count == 4
 
 def test_import_inbound_jcsy_data_idempotency(db_instance, inbound_jcsy_data):
     """Test that importing the same INBOUND JCSY data twice doesn't duplicate or error."""
     inbound_jcsy_content, raw_date_str = inbound_jcsy_data
     # Header info now uses dynamic date from fixture
-    # test_jcsy.txt uses CA0988
+    # test_jcsy.txt uses CA0984
     header_airline = "CA"
-    header_flight_no = "0988" # Corrected from "0984" to match test_jcsy.txt
+    header_flight_no = "0984" # Aligning with test_jcsy.txt content
     # raw_date_str is now from inbound_jcsy_data
     flight_date_obj = _get_parsed_header_date_for_test(raw_date_str)
     assert flight_date_obj is not None, f"Test helper _get_parsed_header_date_for_test failed for {raw_date_str}"
@@ -205,8 +210,8 @@ def test_import_inbound_jcsy_data_idempotency(db_instance, inbound_jcsy_data):
 
         db.cursor.execute("SELECT COUNT(*) FROM query_flights WHERE jcsy_flight_id=?", (jcsy_flight_id1,))
         count_query = db.cursor.fetchone()[0]
-        # Parser currently returns 3 segments for test_jcsy.txt
-        assert count_query == 3
+        # test_jcsy.txt has 4 flight segments
+        assert count_query == 4
 
 # The test_import_outbound_jcsy_data_success function was here and is now removed.
 
