@@ -1,5 +1,5 @@
-import sys # For path manipulation
-import os  # For path manipulation
+import sys # 用于路径操作
+import os  # 用于路径操作
 import time
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTextEdit, QHBoxLayout,
                                QRadioButton, QButtonGroup, QStackedWidget,
@@ -8,29 +8,29 @@ from PySide6.QtCore import (Qt, QRect, QEvent, QPoint, Signal,
                           QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QTimer, QObject)
 from PySide6.QtGui import QFont, QCursor, QPalette, QMouseEvent
 from bin.database.flight_get import FlightGet
-from bin.processors.radio_view import ViewModeHandler # Added Import
+from bin.processors.radio_view import ViewModeHandler # 添加导入
 
 _EDIT_FONT = QFont("Courier New", 11)
 _VIEW_FONT = QFont("Courier New", 11)
-_TABLE_CSS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "table_styles.css")# default CSS for table borders from external file
+_TABLE_CSS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "table_styles.css")# 来自外部文件的表格边框默认 CSS
 _RADIO_HEIGHT = 20
 
 
 class MarkdownViewer(QTextEdit):
     def __init__(self):
         super().__init__()
-        # Make viewer read-only - this means user can't edit text but can still select and copy
+        # 使查看器只读 - 这意味着用户无法编辑文本但仍可以选择和复制
         self.setReadOnly(True)
-        # Use the same font as the editor for consistency - UPDATED FONT
+        # 使用与编辑器相同的字体以保持一致性 - 更新的字体
         self.setFont(_VIEW_FONT)
-        self.setFrameStyle(QFrame.NoFrame) # Remove border
+        self.setFrameStyle(QFrame.NoFrame) # 移除边框
         try:
             with open(_TABLE_CSS_FILE, "r") as f:
                 table_css = f.read()
             self.document().setDefaultStyleSheet(table_css)
         except FileNotFoundError as e:
-            print(f"Warning: CSS file not found at {_TABLE_CSS_FILE}. Table styles will not be applied.\n {e}")
-            # Optionally, define a fallback inline CSS here if the file is critical
+            print(f"警告: 在 {_TABLE_CSS_FILE} 未找到 CSS 文件。表格样式将不会应用。\n {e}")
+            # 可选地，如果文件很关键，在这里定义内联备用 CSS
             fallback_css = """ 
             table { border-collapse: collapse; border: 1px solid black; } 
             th, td { border: 1px solid black; padding: 4px; text-align: left; } 
@@ -40,36 +40,36 @@ class MarkdownViewer(QTextEdit):
 
 
     def setMarkdownText(self, text):
-        # The actual markdown rendering is now handled by ViewModeHandler
-        # This method just sets the HTML content given to it.
+        # 实际的 markdown 渲染现在由 ViewModeHandler 处理
+        # 此方法只是设置给它的 HTML 内容
         self.setHtml(text)
 
 
 
 class ControlPanel(QFrame):
-    modeChanged = Signal(int)  # For Edit/View mode
+    modeChanged = Signal(int)  # 用于编辑/查看模式
     EXPANDED_WIDTH = 150
     COLLAPSED_WIDTH = 45
 
     def __init__(self, parent=None):
         super().__init__(parent)
         control_panel_layout = QVBoxLayout(self)
-        control_panel_layout.setContentsMargins(5, 5, 5, 5) # Reduced margins for collapsed state
-        control_panel_layout.setSpacing(8) # Reduced spacing for tighter collapsed look
+        control_panel_layout.setContentsMargins(5, 5, 5, 5) # 为折叠状态减少边距
+        control_panel_layout.setSpacing(8) # 为更紧密的折叠外观减少间距
         self.setFrameShape(QFrame.StyledPanel)
         self.setObjectName("ControlPanel")
-        #self.setStyleSheet("ControlPanel { border-left: 1px solid palette(mid); background-color: palette(window); }") # Optional styling
-        self._is_expanded = False # Start collapsed
+        #self.setStyleSheet("ControlPanel { border-left: 1px solid palette(mid); background-color: palette(window); }") # 可选样式
+        self._is_expanded = False # 开始折叠
         self.expanded_width = self.EXPANDED_WIDTH
         self.collapsed_width = self.COLLAPSED_WIDTH
-        self.animation_duration = 250 # ms
-        # radio layout
+        self.animation_duration = 250 # 毫秒
+        # 单选按钮布局
         self.radio_layout_widget = QWidget()
         radio_layout = QVBoxLayout(self.radio_layout_widget)
-        radio_layout.setContentsMargins(0,0,0,0) # top, left, right, bottom
-        self.edit_mode_radio = QRadioButton("Edit")
+        radio_layout.setContentsMargins(0,0,0,0) # 上、左、右、下
+        self.edit_mode_radio = QRadioButton("编辑")
         self.edit_mode_radio.setFixedHeight(_RADIO_HEIGHT)
-        self.view_mode_radio = QRadioButton("View")
+        self.view_mode_radio = QRadioButton("查看")
         self.view_mode_radio.setFixedHeight(_RADIO_HEIGHT)
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.edit_mode_radio, 0)
@@ -78,30 +78,30 @@ class ControlPanel(QFrame):
         radio_layout.addWidget(self.edit_mode_radio)
         radio_layout.addWidget(self.view_mode_radio)
         radio_layout.addStretch()
-        control_panel_layout.addWidget(self.radio_layout_widget) # Will be hidden when collapsed
-        control_panel_layout.addStretch(1) # This will push radios up and action buttons down
-        # Connect modeChanged signal to emit modeChanged signal
+        control_panel_layout.addWidget(self.radio_layout_widget) # 折叠时将被隐藏
+        control_panel_layout.addStretch(1) # 这将把单选按钮向上推，操作按钮向下推
+        # 连接 modeChanged 信号以发出 modeChanged 信号
         self.mode_group.idClicked.connect(self.modeChanged.emit)
-        # Buttons
-        self.action_buttons_widget = QWidget() # Widget to hold action buttons
+        # 按钮
+        self.action_buttons_widget = QWidget() # 用于容纳操作按钮的小部件
         action_buttons_layout = QVBoxLayout(self.action_buttons_widget)
         action_buttons_layout.setContentsMargins(0,0,0,0)
         action_buttons_layout.setSpacing(2)
-        self.btn_import = QPushButton("Import")
-        self.btn_fresh = QPushButton("Fresh")
-        self.btn_output = QPushButton("Output")
-        self.btn_print = QPushButton("Print")
+        self.btn_import = QPushButton("导入")
+        self.btn_fresh = QPushButton("刷新")
+        self.btn_output = QPushButton("输出")
+        self.btn_print = QPushButton("打印")
         self.action_buttons_list = [self.btn_import, self.btn_fresh, self.btn_output, self.btn_print]
         self._button_original_texts = {btn: btn.text() for btn in self.action_buttons_list}
         self._radio_original_texts = {self.edit_mode_radio: self.edit_mode_radio.text(), self.view_mode_radio: self.view_mode_radio.text()}
-        # Define collapsed width for buttons
+        # 定义按钮的折叠宽度
         for btn in self.action_buttons_list:
             action_buttons_layout.addWidget(btn)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setMinimumHeight(30) # Smaller buttons when collapsed
-            btn.setMinimumWidth(self.collapsed_width - 10) # Ensure they fit collapsed width
-        control_panel_layout.addWidget(self.action_buttons_widget) # Add action buttons container at the bottom
-        # Animation
+            btn.setMinimumHeight(30) # 折叠时更小的按钮
+            btn.setMinimumWidth(self.collapsed_width - 10) # 确保它们适合折叠宽度
+        control_panel_layout.addWidget(self.action_buttons_widget) # 在底部添加操作按钮容器
+        # 动画
         self.animation_group = QParallelAnimationGroup(self)
         self.min_width_anim = QPropertyAnimation(self, b"minimumWidth")
         self.max_width_anim = QPropertyAnimation(self, b"maximumWidth")
@@ -110,22 +110,22 @@ class ControlPanel(QFrame):
             anim.setEasingCurve(QEasingCurve.InOutQuad)
             self.animation_group.addAnimation(anim)
         self.animation_group.finished.connect(self._post_animation_update)
-        #self._update_visual_state_immediately() # Set initial collapsed state correctly
+        #self._update_visual_state_immediately() # 正确设置初始折叠状态
 
 
     def mousePressEvent(self, event: QEvent):
-        super().mousePressEvent(event) # Pass to children first
+        super().mousePressEvent(event) # 首先传递给子项
         if event.isAccepted(): return
 
 
     def animate_expand(self):
-        # Check if animation is already running or if it's already at the expanded width, beacuse we don't want to animate it again
+        # 检查动画是否已经在运行，或者如果它已经在展开宽度，因为我们不想再次动画它
         if self._is_expanded and (self.animation_group.state() == QParallelAnimationGroup.Running and self.min_width_anim.endValue() == self.expanded_width):
             return
         if self._is_expanded and self.animation_group.state() == QParallelAnimationGroup.Stopped:
             return
         self._is_expanded = True
-        # Animate the width to the expanded width
+        # 将宽度动画到展开宽度
         self.min_width_anim.setStartValue(self.width())
         self.min_width_anim.setEndValue(self.expanded_width)
         self.max_width_anim.setStartValue(self.width())
@@ -139,7 +139,7 @@ class ControlPanel(QFrame):
         if not self._is_expanded and self.animation_group.state() == QParallelAnimationGroup.Stopped:
             return
         self._is_expanded = False
-        self._update_content_visibility_and_text(False) # Hide content before animation
+        self._update_content_visibility_and_text(False) # 在动画前隐藏内容
         self.min_width_anim.setStartValue(self.width())
         self.min_width_anim.setEndValue(self.collapsed_width)
         self.max_width_anim.setStartValue(self.width())
@@ -152,13 +152,13 @@ class ControlPanel(QFrame):
         self.setFixedWidth(current_target_width)
         if self._is_expanded:
             self._update_content_visibility_and_text(True)
-        else: # Collapsed state
+        else: # 折叠状态
             self._update_content_visibility_and_text(False)
 
 
     def _update_content_visibility_and_text(self, expanded):
         #self.radio_layout_widget.setVisible(expanded)
-        # Action buttons widget is always visible, its content (text) changes
+        # 操作按钮小部件始终可见，其内容（文本）会改变
         if not self.action_buttons_widget.isVisible(): self.action_buttons_widget.show()
         for btn in self.action_buttons_list:
             original_text = self._button_original_texts.get(btn, "")
@@ -172,10 +172,10 @@ class ControlPanel(QFrame):
             radio.setText(text if expanded else "")
 
 
-    def _update_visual_state_immediately(self): # For initial setup
+    def _update_visual_state_immediately(self): # 用于初始设置
         self.setFixedWidth(self.expanded_width if self._is_expanded else self.collapsed_width)
-        # This call will now correctly set up the action buttons (visible but text-less)
-        # and hide the radio_layout_widget for the initial collapsed state.
+        # 此调用现在将正确设置操作按钮（可见但无文本）
+        # 并为初始折叠状态隐藏 radio_layout_widget
         self._update_content_visibility_and_text(self._is_expanded)
 
 
@@ -185,117 +185,104 @@ class Window(QWidget):
     _WINDOW_HEIGHT = 600
     _EDIT_MODE = 0
     _VIEW_MODE = 1
-    _HOVER_CHECK_INTERVAL = 0.1 # Seconds between hover checks - Adjusted back to 0.1s
+    _HOVER_CHECK_INTERVAL = 0.1 # 悬停检查之间的秒数 - 调整回 0.1 秒
 
     def __init__(self):
         super().__init__()
-        self._last_hover_check_time = 0 # Initialize hover check time
-        self.setWindowTitle("JCSY Flights 0.5")
+        self._last_hover_check_time = 0 # 初始化悬停检查时间
+        self.setWindowTitle("JCSY 航班 0.5")
         screen = QApplication.primaryScreen()
-        # Default start position at bottom right of screen.
+        # 默认在屏幕右下角开始位置
         self.setGeometry(screen.availableGeometry().x() + screen.availableGeometry().width() - self._WINDOW_WIDTH, 
                   screen.availableGeometry().y() + screen.availableGeometry().height() - self._WINDOW_HEIGHT,
                   self._WINDOW_WIDTH,
                   self._WINDOW_HEIGHT)
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(5,5,5,5) # Adjust as needed
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        # Stacked widget for Editor/Viewer
+        # 控制面板
+        self.control_panel = ControlPanel(self)
+        main_layout.addWidget(self.control_panel)
+        # 堆叠小部件用于编辑器和查看器
         self.stacked_widget = QStackedWidget()
+        # 编辑器
         self.editor = QTextEdit()
-        self.editor.setPlaceholderText("Enter JCSY data or Markdown text here...")
         self.editor.setFont(_EDIT_FONT)
-        self.editor.setFrameStyle(QFrame.NoFrame) # Remove editor border (blue line fix)
-        self.viewer = MarkdownViewer() # MarkdownViewer also calls setFrameStyle(QFrame.NoFrame)
-        self.stacked_widget.addWidget(self.editor)  # Index 0
-        self.stacked_widget.addWidget(self.viewer)  # Index 1
-        main_layout.addWidget(self.stacked_widget, 1) # Add with stretch factor of 1 (takes more space)
-        # Control Panel (always visible on the right)
-        self.control_panel = ControlPanel(self) 
-        # ControlPanel now manages its own width via animation and initial state
-        self.control_panel.modeChanged.connect(self._handle_mode_change) # Connect to new handler
-        main_layout.addWidget(self.control_panel, 0) # Stretch factor 0, panel controls its size
-        # Initialize FlightGet for database lookups
-        self.flight_getter = FlightGet("flight.db")
-        # Instantiate ViewModeHandler
-        self.view_mode_handler = ViewModeHandler(self.editor, self.viewer, self.flight_getter)
-        
-        # Connect button signals to handlers
+        self.editor.setFrameStyle(QFrame.NoFrame)
+        self.stacked_widget.addWidget(self.editor)
+        # 查看器
+        self.viewer = MarkdownViewer()
+        self.stacked_widget.addWidget(self.viewer)
+        main_layout.addWidget(self.stacked_widget)
+        # 连接信号
+        self.control_panel.modeChanged.connect(self._handle_mode_change)
+        # 连接按钮信号
         self.control_panel.btn_import.clicked.connect(self._handle_import)
         self.control_panel.btn_fresh.clicked.connect(self._handle_fresh)
         self.control_panel.btn_output.clicked.connect(self._handle_output)
         self.control_panel.btn_print.clicked.connect(self._handle_print)
-        
-        self._handle_mode_change(self._EDIT_MODE) # Ensure editor is shown and preview is initially updated based on default mode
-        # Enable mouse tracking for hover detection
-        self.setMouseTracking(True)
-        self.stacked_widget.setMouseTracking(True) # Important for events over this large area
-        self.control_panel.setMouseTracking(True) # And the panel itself
-        # Install event filter to capture global mouse moves
-        QApplication.instance().installEventFilter(self)
+        # 设置初始模式
+        self.stacked_widget.setCurrentIndex(self._EDIT_MODE)
+        # 安装事件过滤器以检测鼠标悬停
+        self.installEventFilter(self)
+        # 初始化 ViewModeHandler
+        self.flight_getter = FlightGet()
+        self.view_mode_handler = ViewModeHandler(self.editor, self.viewer, self.flight_getter)
+        # 设置初始视觉状态
+        self.control_panel._update_visual_state_immediately()
 
 
     def _handle_mode_change(self, mode_id):
-        """Handles switching between Edit and View modes."""
-        self.stacked_widget.setCurrentIndex(mode_id)
-        if mode_id == self._VIEW_MODE: # Switched to View Mode (index 1 for viewer)
+        """处理模式更改"""
+        if mode_id == self._EDIT_MODE:
+            self.stacked_widget.setCurrentIndex(self._EDIT_MODE)
+        else: # 查看模式
+            self.stacked_widget.setCurrentIndex(self._VIEW_MODE)
+            # 更新 markdown 视图
             self.view_mode_handler.update_markdown_view()
 
 
     def _check_hover_and_trigger_panel_state(self, pos_in_window: QPoint):
-        panel = self.control_panel
-        if panel.animation_group.state() == QParallelAnimationGroup.Running:
-            return # Don't interfere with ongoing animation
-        activation_width = self.control_panel.EXPANDED_WIDTH + 25 # How far from right edge to detect hover for expansion
-        #panel_geom = panel.geometry() # Current geometry of the panel
-        hover_trigger_rect = QRect(self.width() - activation_width,
-                                0,
-                                activation_width - self.control_panel.COLLAPSED_WIDTH,
-                                self.height())
-        #is_mouse_over_panel_area = panel_geom.contains(pos_in_window)
-        is_mouse_in_wider_hover_zone = hover_trigger_rect.contains(pos_in_window)
-        if is_mouse_in_wider_hover_zone:
-            if not panel._is_expanded: panel.animate_expand()
-        else: # Mouse is outside panel and its activation zone
-            if panel._is_expanded: panel.animate_collapse()
+        """检查鼠标位置并触发面板状态"""
+        current_time = time.time()
+        if current_time - self._last_hover_check_time < self._HOVER_CHECK_INTERVAL:
+            return # 限制检查频率
+        self._last_hover_check_time = current_time
+        # 检查鼠标是否在控制面板区域
+        panel_rect = self.control_panel.geometry()
+        if panel_rect.contains(pos_in_window):
+            if not self.control_panel._is_expanded:
+                self.control_panel.animate_expand()
+        else:
+            if self.control_panel._is_expanded:
+                self.control_panel.animate_collapse()
 
 
     def _handle_import(self):
-        """Handle Import button click - placeholder for importing flight data"""
-        # TODO: Implement import functionality
-        print("Import button clicked - functionality not yet implemented")
-        
+        """处理导入按钮点击"""
+        print("导入按钮被点击")
+
+
     def _handle_fresh(self):
-        """Handle Fresh button click - placeholder for refreshing data"""
-        # TODO: Implement fresh/refresh functionality
-        print("Fresh button clicked - functionality not yet implemented")
-        
+        """处理刷新按钮点击"""
+        print("刷新按钮被点击")
+
+
     def _handle_output(self):
-        """Handle Output button click - placeholder for exporting data"""
-        # TODO: Implement output/export functionality
-        print("Output button clicked - functionality not yet implemented")
-        
+        """处理输出按钮点击"""
+        print("输出按钮被点击")
+
+
     def _handle_print(self):
-        """Handle Print button click - placeholder for printing"""
-        # TODO: Implement print functionality
-        print("Print button clicked - functionality not yet implemented")
+        """处理打印按钮点击"""
+        print("打印按钮被点击")
 
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """
-        Filters global events to catch mouse movements anywhere because the editor widget has its own mouse tracking that covers the mouseEvent.
-        This is used to detect when the mouse is over the control panel and trigger the panel to expand or collapse.
-        """
-        if isinstance(event, QMouseEvent) and event.type() == QEvent.Type.MouseMove:
-            current_time = time.monotonic()
-            if current_time - self._last_hover_check_time >= self._HOVER_CHECK_INTERVAL:
-                global_pos = event.globalPosition().toPoint()
-                pos_in_window = self.mapFromGlobal(global_pos)
-                # Check if the mouse is actually within the window's bounds before checking panel state
-                if self.rect().contains(pos_in_window):
-                    self._check_hover_and_trigger_panel_state(pos_in_window)
-                self._last_hover_check_time = current_time  
-        # Pass the event along to the default handler
+        """事件过滤器以检测鼠标移动"""
+        if event.type() == QEvent.MouseMove:
+            mouse_event = QMouseEvent(event)
+            self._check_hover_and_trigger_panel_state(mouse_event.pos())
         return super().eventFilter(watched, event)
 
 

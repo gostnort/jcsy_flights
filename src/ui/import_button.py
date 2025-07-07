@@ -1,244 +1,135 @@
-# This file will contain functions for UI button actions.
-# Initially, it will house the function for the "import" button.
+# 此文件将包含 UI 按钮操作的函数
+# 最初，它将包含"导入"按钮的函数
 
 import sys
 import os
 import datetime
 import sqlite3
 
-# Add project root to Python path to allow direct imports
+# 将项目根目录添加到 Python 路径以允许直接导入
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from bin.config.jcsy_config import JcsyParser
+from bin.database.flight_add import FlightAdd
+from bin.database.flight_get import FlightGet
 from bin.database.flight_db import FlightDatabase
 
-# Initialize the parser and database
-# For simplicity in a single-threaded UI context, global might be acceptable,
-# but for broader applications, dependency injection is preferred.
-# Error handling for initialization is important for robustness.
-jcsy_parser = None
-flight_db = None
-
-try:
-    jcsy_parser = JcsyParser(config_file="jcsy_config.yaml")
-except Exception as e:
-    print(f"CRITICAL: Error initializing JcsyParser: {e}. The import function will not work.")
-    # Depending on the application, might raise e or handle more gracefully
-
-try:
-    # Ensure the database directory exists
-    db_dir = os.path.join(project_root, "src", "database")
-    if not os.path.exists(db_dir):
-        os.makedirs(db_dir)
-    flight_db = FlightDatabase() # Uses default "flights.db" in src/database/
-except Exception as e:
-    print(f"CRITICAL: Error initializing FlightDatabase: {e}. The import function will not work.")
-    # Depending on the application, might raise e or handle more gracefully
 
 def parse_std_datetime(std_text: str, base_date: datetime.date) -> datetime.datetime | None:
     """
-    Parses STD text (HHMM or HHMM+D) into a datetime object.
-    Returns None if parsing fails.
+    解析 STD 文本（HHMM 或 HHMM+D）为 datetime 对象
+    如果解析失败则返回 None
     """
     if not std_text or not base_date:
         return None
     try:
+        # 提取时间部分
         time_str = std_text[:4]
         hour = int(time_str[:2])
         minute = int(time_str[2:])
-
+        # 处理日期偏移
         day_offset = 0
         if len(std_text) > 4 and std_text[4] == '+':
             day_offset = int(std_text[5:])
-
+        # 创建日期时间对象
         dt = datetime.datetime(base_date.year, base_date.month, base_date.day, hour, minute)
         dt += datetime.timedelta(days=day_offset)
         return dt
     except ValueError:
-        return None # Invalid format
+        return None # 无效格式
+
 
 def safe_int_convert(value_str: str | None) -> int | None:
-    """Safely converts a string (potentially None or empty) to an int, trimming leading zeros."""
+    """安全地将字符串（可能为 None 或空）转换为 int，去除前导零"""
     if value_str is None or not str(value_str).strip():
-        return 0 # Default to 0 if empty or None
+        return 0 # 如果为空或 None 则默认为 0
     try:
-        # The parser should handle trim_leading_zeros based on YAML,
-        # but as a safeguard or if direct values are passed:
+        # 解析器应该基于 YAML 处理 trim_leading_zeros
+        # 但作为保护措施或如果直接传递值：
         cleaned_value = str(value_str).lstrip('0')
-        if not cleaned_value: # if it was all zeros e.g. "000"
+        if not cleaned_value: # 如果全是零，例如 "000"
             return 0
         return int(cleaned_value)
     except ValueError:
-        return 0 # Default to 0 if conversion fails
+        return 0 # 如果转换失败则默认为 0
+
 
 def import_jcsy_data(jcsy_text_content: str):
     """
-    Parses JCSY formatted text content and stores it in the database.
+    解析 JCSY 格式的文本内容并将其存储在数据库中
+    使用 FlightAdd 类来处理数据库操作
     """
-    if not jcsy_parser:
-        msg = "JCSY Parser not initialized. Cannot process data."
-        print(msg)
-        return {"status": "error", "message": msg}
-    if not flight_db:
-        msg = "Flight Database not initialized. Cannot process data."
-        print(msg)
-        return {"status": "error", "message": msg}
-
     try:
-        parsed_data = jcsy_parser.parse_content(jcsy_text_content)
-        # print(f"Parsed JCSY content: {parsed_data}") # For debugging
-
-        header = parsed_data.get('header')
-        flight_entries_dict = parsed_data.get('flight', {}) # It's a dict like {"flight_0": ..., "flight_1": ...}
-        # print(f"DEBUG: Number of flight entries parsed: {len(flight_entries_dict)}") # Removed temporary debug print
-
-        if not header:
-            return {"status": "error", "message": "Failed to parse JCSY header."}
-
-        with flight_db: # Handles connect and close
-            # 1. Insert into jcsy_flights (main entry from header)
-            header_flight_date_str = header.get('header_flight_date')
-            # The JcsyParser's parse_header_date already returns a date object or string YYYYMMDD
-            # Forcing it to string for consistency before DB.
-            # If it's already a date object from parser:
-            if isinstance(header_flight_date_str, datetime.date):
-                db_flight_date = header_flight_date_str.strftime('%Y-%m-%d')
-            elif isinstance(header_flight_date_str, str) and len(header_flight_date_str) == 8: # YYYYMMDD
-                db_flight_date = f"{header_flight_date_str[:4]}-{header_flight_date_str[4:6]}-{header_flight_date_str[6:8]}"
-            else: # Fallback or error
-                 return {"status": "error", "message": f"Invalid flight date format from parser: {header_flight_date_str}"}
-
-
-            # Determine departure/arrival for jcsy_flights based on inbound_not
-            is_inbound = safe_int_convert(header.get('inbound_not')) == 1
-            jcsy_main_departure_airport = None
-            jcsy_main_arrival_airport = None
-
-            if is_inbound: # Inbound flight, header_airport is the arrival
-                jcsy_main_arrival_airport = header.get('header_airport')
-            else: # Outbound flight, header_airport is the departure
-                jcsy_main_departure_airport = header.get('header_airport')
-
-            flight_db.cursor.execute("""
-                INSERT INTO jcsy_flights (
-                    airline, flight_number, flight_date, departure_airport,
-                    arrival_airport, inbound_not,
-                    std, etd, atd, sta, eta, ata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                header.get('header_airline'),
-                header.get('header_flight_number'),
-                db_flight_date,
-                jcsy_main_departure_airport,
-                jcsy_main_arrival_airport,
-                safe_int_convert(header.get('inbound_not')),
-                None, None, None, None, None, None # Time fields for jcsy_flights remain None
-            ))
-            jcsy_flight_id = flight_db.cursor.lastrowid
-            if not jcsy_flight_id:
-                 return {"status": "error", "message": "Failed to insert master JCSY flight record."}
-
-            # 2. Iterate through flight_entries and insert into query_flights
-            base_date_for_std = datetime.datetime.strptime(db_flight_date, '%Y-%m-%d').date()
-
-            for flight_key, flight_data in flight_entries_dict.items():
-                std_datetime = parse_std_datetime(flight_data.get('std_text'), base_date_for_std)
-                is_delayed = 1 if flight_data.get('std_text', '').endswith(("+1", "+2")) else 0
-
-                # Determine departure/arrival for query_flights based on inbound_not
-                query_departure_airport = None
-                query_arrival_airport = None
-                if is_inbound:
-                    # For inbound, the main header airport is the destination of segments,
-                    # and the segment's 'airport' field is its origin.
-                    query_arrival_airport = header.get('header_airport')
-                    query_departure_airport = flight_data.get('airport')
-                else:
-                    # For outbound, the main header airport is the origin of segments,
-                    # and the segment's 'airport' field is its destination.
-                    query_departure_airport = header.get('header_airport')
-                    query_arrival_airport = flight_data.get('airport')
-
-                flight_db.cursor.execute("""
-                    INSERT INTO query_flights (
-                        jcsy_flight_id, airline, flight_number, flight_date,
-                        departure_airport, arrival_airport, std_text, std,
-                        delayed, booked_count_non_economy, booked_count_economy,
-                        checked_count_non_economy, checked_count_economy, check_count_infant,
-                        bags_count_piece, bags_count_weight
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    jcsy_flight_id,
-                    flight_data.get('airline'),
-                    flight_data.get('flight_number'),
-                    db_flight_date,
-                    query_departure_airport,
-                    query_arrival_airport,
-                    flight_data.get('std_text'),
-                    std_datetime,
-                    is_delayed,
-                    safe_int_convert(flight_data.get('booked_count_non_economy')),
-                    safe_int_convert(flight_data.get('booked_count_economy')),
-                    safe_int_convert(flight_data.get('checked_count_non_economy')),
-                    safe_int_convert(flight_data.get('checked_count_economy')),
-                    safe_int_convert(flight_data.get('check_count_infant')),
-                    safe_int_convert(flight_data.get('bags_count_piece')),
-                    safe_int_convert(flight_data.get('bags_count_weight'))
-                ))
-
-            flight_db.connection.commit()
-
-        num_flights_processed = len(flight_entries_dict)
+        # 使用 FlightAdd 类来处理 JCSY 内容导入
+        flight_add = FlightAdd()
+        # 调用 add_jcsy_content 方法，它会处理所有数据库操作
+        flight_ids = flight_add.add_jcsy_content(jcsy_text_content)
+        # 检查返回的航班 ID
+        if not flight_ids:
+            return {"status": "error", "message": "导入失败：未返回任何航班 ID"}
+        # 第一个 ID 是主航班记录，其余是查询航班记录
+        header_flight_id = flight_ids[0]
+        query_flight_count = len(flight_ids) - 1
+        # 返回成功状态和消息
         return {
             "status": "success",
-            "message": f"Successfully imported JCSY data. Master record ID: {jcsy_flight_id}. Processed {num_flights_processed} flight segments."
+            "message": f"成功导入 JCSY 数据。主记录 ID: {header_flight_id}。处理了 {query_flight_count} 个航班段。"
         }
-
-    except sqlite3.Error as e:
-        # It's good practice to rollback on error if not using context manager for commit
-        # flight_db.connection.rollback() # flight_db context manager handles this if exception occurs within 'with'
-        print(f"Database error during JCSY data import: {e}")
-        return {"status": "error", "message": f"Database error: {str(e)}"}
+    except ValueError as e:
+        # 处理解析错误
+        return {"status": "error", "message": f"解析错误: {str(e)}"}
     except Exception as e:
-        print(f"General error during JCSY data import: {e}")
-        return {"status": "error", "message": f"Error during import: {str(e)}"}
+        # 处理其他错误
+        return {"status": "error", "message": f"导入过程中出错: {str(e)}"}
+
+
+def import_jcsy_data_legacy(jcsy_text_content: str):
+    """
+    解析 JCSY 格式的文本内容并将其存储在数据库中
+    这是重构后的旧方法实现，使用 FlightAdd 类而不是直接 SQL
+    """
+    try:
+        # 使用与新方法相同的 FlightAdd 类，但保持单独的函数以便向后兼容
+        flight_add = FlightAdd(config_path="jcsy_config.yaml")
+        # 调用相同的 add_jcsy_content 方法处理数据
+        flight_ids = flight_add.add_jcsy_content(jcsy_text_content)
+        # 检查返回的航班 ID
+        if not flight_ids:
+            return {"status": "error", "message": "导入失败：未返回任何航班 ID"}
+        # 处理结果，与原始实现保持一致的返回格式
+        header_flight_id = flight_ids[0]
+        num_flights_processed = len(flight_ids) - 1
+        # 返回成功状态和消息
+        return {
+            "status": "success",
+            "message": f"成功导入 JCSY 数据。主记录 ID: {header_flight_id}。处理了 {num_flights_processed} 个航班段。"
+        }
+    except ValueError as e:
+        # 处理解析错误
+        return {"status": "error", "message": f"解析错误: {str(e)}"}
+    except Exception as e:
+        # 处理其他错误
+        return {"status": "error", "message": f"导入过程中出错: {str(e)}"}
 
 
 if __name__ == '__main__':
-    # Example usage (for testing purposes)
-    sample_jcsy_text_from_yaml = """JCSY:CA0983/24APR/PEK,O
-FLT/DEST/GTD   DEPT   BKD     CHK(NTC)   CHK(TC)    UCK     BAG
-CM0306 /PTY/          000/001 000/001+00 000/000+00 000/000 002/0039
-UA1843 /ORD/   2359   000/002 000/000+00 000/002+00 000/000 000/0000
-UA2733 /IAH/   0050+1 001/006 000/000+00 001/006+00 000/000 008/0140"""
-
-    if jcsy_parser and flight_db:
-        print("Attempting to parse and import sample JCSY data from YAML example...")
-        # Clean up database for fresh test
-        # db_file = os.path.join(project_root, "src", "database", "flights.db")
-        # if os.path.exists(db_file):
-        #     os.remove(db_file)
-        # flight_db.initialize_database() # Re-initialize
-
-        result = import_jcsy_data(sample_jcsy_text_from_yaml)
-        print(f"Import result: {result}")
-
-        # You could add a SELECT query here to verify data
-        if result["status"] == "success" and flight_db:
-            try:
-                with flight_db:
-                    print("\nVerifying jcsy_flights table:")
-                    for row in flight_db.cursor.execute("SELECT * FROM jcsy_flights"):
-                        print(dict(row))
-                    print("\nVerifying query_flights table:")
-                    for row in flight_db.cursor.execute("SELECT * FROM query_flights"):
-                        print(dict(row))
-            except Exception as e:
-                print(f"Error verifying data: {e}")
-
-    else:
-        print("Could not run test: JcsyParser or FlightDatabase not initialized.")
-
-    print("\nbutton_functions.py updated with data insertion logic.")
+    print("测试 import_button.py...")
+    # 测试数据
+    test_jcsy_content = """
+JCSY:UA123/15JAN/LAX,O
+FLT/ORIG   ARVL   BKD     CHK        UCK     NBRD       BAG
+UA123 /SFO 0835  000/001 000/001+00 000/000 000/000+00 001/0016
+UA123 /ORD 1200  000/002 000/002+00 000/000 000/000+00 002/0032
+"""
+    print("测试 JCSY 导入（新方法）...")
+    result = import_jcsy_data(test_jcsy_content)
+    print(f"结果: {result}")
+    print("\n测试 JCSY 导入（旧方法）...")
+    legacy_result = import_jcsy_data_legacy(test_jcsy_content)
+    print(f"旧方法结果: {legacy_result}")
+    # 测试错误情况
+    print("\n测试错误情况...")
+    error_result = import_jcsy_data("无效的 JCSY 内容")
+    print(f"错误结果: {error_result}")
