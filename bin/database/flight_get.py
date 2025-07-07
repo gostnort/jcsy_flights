@@ -5,16 +5,42 @@ import os
 
 # Get flight data from database
 class FlightGet:
-    def __init__(self, db_name: str, path_without_db_name: str = ""):
-        if path_without_db_name == "":
-            src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            db_path = os.path.join(src_dir, "src", "database", db_name)
-            self.db = FlightDatabase(db_path)
-        else:
-            self.db = FlightDatabase(path_without_db_name + db_name)
+    def __init__(self, db_name: str | None = None, path_without_db_name: str = ""):
+        final_db_spec: str
+        if db_name is None:
+            # Default behavior: use FlightDatabase.DEFAULT_DB_NAME in standard location relative to this file's project structure
+            src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # .../FlightInfoSystem
+            # Ensure "src/database" exists for the default flights.db (FlightDatabase constructor handles this too)
+            db_dir_for_default = os.path.join(src_dir, "src", "database")
+            if not os.path.exists(db_dir_for_default) and path_without_db_name == "": # Only create if not using custom path
+                os.makedirs(db_dir_for_default, exist_ok=True)
+            final_db_spec = os.path.join(db_dir_for_default, FlightDatabase.DEFAULT_DB_NAME)
+
+            if path_without_db_name != "": # if path_without_db_name is given, it overrides default dir for default DB name
+                final_db_spec = os.path.join(path_without_db_name, FlightDatabase.DEFAULT_DB_NAME)
+
+        elif db_name == ":memory:":
+            final_db_spec = ":memory:"
+        else: # A specific db_name (filename) is given
+            if path_without_db_name == "":
+                src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                # Ensure "src/database" exists if a specific db_name is to be placed there by default
+                db_dir_for_specific = os.path.join(src_dir, "src", "database")
+                if not os.path.exists(db_dir_for_specific):
+                     os.makedirs(db_dir_for_specific, exist_ok=True)
+                final_db_spec = os.path.join(db_dir_for_specific, db_name)
+            else:
+                # Ensure custom path exists
+                if not os.path.exists(path_without_db_name):
+                    os.makedirs(path_without_db_name, exist_ok=True)
+                final_db_spec = os.path.join(path_without_db_name, db_name)
+
+        self.db = FlightDatabase(final_db_spec)
+        # self.db_name_arg_for_test_patch = db_name # For PatchedFlightGet in tests to reference original intent
+        self._cursor = None
 
 
-    def return_flight_id(self, table:str, airline:str, flight_number:str, flight_date:date) -> list:
+    def return_flight_id(self, table:str, airline:str, flight_number:str, flight_date:date): # Return type hint was list, but it returns a Row or None
         if len(flight_number) < 4:
             flight_number = flight_number.zfill(4)
         # Convert datetime to date string in YYYY-MM-DD format
