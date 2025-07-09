@@ -12,7 +12,7 @@ class JcsyParser:
     """
     
 
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str = 'jcsy_config.yaml'):
         """
         Args:
             config_file: Name of the YAML config file located in the "src/config" folder

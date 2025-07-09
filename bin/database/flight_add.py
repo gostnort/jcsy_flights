@@ -64,7 +64,7 @@ class FlightAdd:
         'bags_count_weight': int,
         }
 
-    def __init__(self, config_path: str = 'jcsy_config.yaml'):
+    def __init__(self, config_path: str ):
         """Initialize with database connection and config parser"""
         # Use consistent database name - "flight.db" (without 's')
         self.db_name = "flight.db"
