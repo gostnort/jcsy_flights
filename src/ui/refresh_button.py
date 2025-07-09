@@ -1,7 +1,11 @@
 # src/ui/refresh_button.py
-
-import sys
 import os
+import sys
+# Always set project root as cwd and sys.path for import/file compatibility
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+os.chdir(project_root)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 import datetime
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -21,33 +25,48 @@ if project_root not in sys.path:
 JCSY_HEADER_PATTERN = re.compile(r"^(?:JCSY:)?(?P<airline>[A-Z0-9]{2})(?P<flight_number>\d+)/(?P<flight_date_str>\d+[A-Z]{3})(?:/(?P<airport>[A-Z]{3})(?:,(?P<inbound_flag>[IO]))?)?")
 
 
-def parse_jcsy_header_for_refresh(header_text: str) -> dict | None:
+def _parse_jcsy_header_for_refresh(jcsy_with_header_text: str) -> dict | None:
     """
     解析类似 JCSY 的头部字符串以提取航班识别详情
     返回包含 'airline'、'flight_number'、'date'（datetime.date）、
     'airport'（如果存在）的字典，如果解析失败则返回 None
     日期解析已简化，如果年份不在 DDMMM 格式中则假设为当前年份
     """
-    match = JCSY_HEADER_PATTERN.match(header_text.upper())
-    if not match:
+    if not jcsy_with_header_text:
         return None
+    # 分割成行并找到第一个非空的 JCSY 行
+    lines = jcsy_with_header_text.strip().split('\n')
+    jcsy_line = None
+    for line in lines:
+        line = line.strip()
+        if line and ('JCSY:' in line):  # 常见的中国航空公司代码
+            jcsy_line = line
+            break
+    if not jcsy_line:
+        return None
+    match = JCSY_HEADER_PATTERN.match(jcsy_line.upper())
+    if not match:
+        return None  
     # 获取匹配的详细信息
     details = match.groupdict()
     parsed = {
         "airline": details["airline"],
         "flight_number": details["flight_number"],
         "airport": details.get("airport") # 如果不在 header_text 中可能为 None
-    }
+    } 
     # 解析日期字符串
     date_str = details["flight_date_str"]
-    try:
-        # 尝试 DDMMMYY 或 DDMMM
-        if len(date_str) > 5: # DDMMMYY 例如 12DEC24
-            parsed["date"] = datetime.datetime.strptime(date_str, "%d%b%y").date()
-        else: # DDMMM 例如 12DEC，假设为当前年份
-            parsed["date"] = datetime.datetime.strptime(date_str, "%d%b").date().replace(year=datetime.datetime.now().year)
-    except ValueError:
-        return None # 无效的日期格式
+    if date_str == "{{FLIGHT_DATE}}":  # 处理测试占位符
+        parsed["date"] = datetime.date.today()
+    else:
+        try:
+            # 尝试 DDMMMYY 或 DDMMM
+            if len(date_str) > 5: # DDMMMYY 例如 12DEC24
+                parsed["date"] = datetime.datetime.strptime(date_str, "%d%b%y").date()
+            else: # DDMMM 例如 12DEC，假设为当前年份
+                parsed["date"] = datetime.datetime.strptime(date_str, "%d%b").date().replace(year=datetime.datetime.now().year)
+        except ValueError:
+            return None # 无效的日期格式   
     return parsed
 
 
@@ -188,7 +207,7 @@ def _update_flight_in_db(query_flight_id: int, crawler_data: CrawlerReturnStruct
         print(f"更新 query_flight_id {query_flight_id} 时出错: {e}")
 
 
-def refresh_flight_data(header_text: str | None = None) -> str:
+def refresh_button(jcsy_text: str | None = None) -> str:
     """
     刷新航班数据的主要函数
     如果提供了 header_text，则刷新特定航班
@@ -198,10 +217,10 @@ def refresh_flight_data(header_text: str | None = None) -> str:
     try:
         # 解析头部（如果提供）
         header_details = None
-        if header_text:
-            header_details = parse_jcsy_header_for_refresh(header_text)
+        if jcsy_text:
+            header_details = _parse_jcsy_header_for_refresh(jcsy_text)
             if not header_details:
-                return f"无法解析头部文本: {header_text}"
+                return f"无法解析头部文本: {jcsy_text}"
         # 获取需要刷新的航班
         flights_to_refresh = _get_flights_to_refresh(header_details)
         if isinstance(flights_to_refresh, str): # 错误消息
@@ -269,3 +288,26 @@ def _process_single_flight_refresh(flight_info: dict, results_log: list):
             'flight_id': flight_id,
             'message': f'处理 {airline}{flight_number} 时出错: {str(e)}'
         })
+
+def test():
+    """
+    测试函数，调用 _parse_jcsy_header_for_refresh 并打印结果
+    从根目录读取 test_jcsy.txt 作为测试用例
+    """
+    try:
+        with open('test_jcsy.txt', 'r', encoding='utf-8') as f:
+            test_string = f.read()
+    except FileNotFoundError:
+        print("未找到 test_jcsy.txt 文件，请将其放在项目根目录下。")
+        return
+    # 替换 {{FLIGHT_DATE}} 为今天的 DDMMM 格式
+    today = datetime.date.today()
+    today_ddmmm = today.strftime('%d%b').upper()
+    test_string = test_string.replace("{{FLIGHT_DATE}}", today_ddmmm)
+    result = _parse_jcsy_header_for_refresh(test_string)
+    print(result)
+
+if __name__ == "__main__":
+
+    # 运行测试
+    test()
