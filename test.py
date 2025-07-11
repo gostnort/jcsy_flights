@@ -13,6 +13,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.ui.import_button import import_button
+from bin.database.flight_get import FlightGet
 
 
 def main():
@@ -34,15 +35,14 @@ def main():
             print("Error: test_jcsy.txt is empty")
             return
         print("JCSY content loaded successfully")
-        print("-" * 50)
-        print("JCSY Content:")
-        print(jcsy_content)
-        print("-" * 50)
         # 替换 {{FLIGHT_DATE}} 为今天的日期
         today = datetime.date.today()
         today_ddmmm = today.strftime('%d%b').upper()
         jcsy_content = jcsy_content.replace("{{FLIGHT_DATE}}", today_ddmmm)
         print(f"Replaced {{FLIGHT_DATE}} with: {today_ddmmm}")
+        print("-" * 50)
+        print("Processed JCSY Content:")
+        print(jcsy_content)
         print("-" * 50)
         # 调用 import_button 完成整个数据处理流程
         print("Starting import and refresh process...")
@@ -52,6 +52,11 @@ def main():
         print("Final Result:")
         print(result)
         print("=" * 50)
+        # 验证数据库中的导入结果
+        print("Verifying database import...")
+        print("-" * 50)
+        verify_database_import(today)
+        print("=" * 50)
         print("Test completed successfully!")
     except FileNotFoundError as e:
         print(f"File error: {e}")
@@ -59,6 +64,36 @@ def main():
         print(f"Test failed with error: {e}")
         import traceback
         traceback.print_exc()
+
+
+def verify_database_import(flight_date: datetime.date):
+    """
+    验证数据库中的导入结果
+    查询并显示 header flight 和相关的 flights
+    """
+    try:
+        flight_get = FlightGet()
+        # 使用 return_flight_id 方法查询 header flight
+        header_flight = flight_get.return_flight_id('jcsy_flights', 'CA', '1234', flight_date)
+        if header_flight:
+            header_id = header_flight['id']
+            print(f"Header flight ID: {header_id}")
+            # 使用 FlightGet 方法查询相关的 flight segments
+            flight_ids = flight_get.return_related_flights_IDs('query_flights', header_id)
+            print(f"Related flight segments: {len(flight_ids)}")
+            for flight_id in flight_ids:
+                flight_data = flight_get.return_flight_data('query_flights', flight_id)
+                if flight_data:
+                    print(f"  Segment ID: {flight_id}, {flight_data.get('airline')}{flight_data.get('flight_number')}")
+                    print(f"    Route: {flight_data.get('departure_airport')} -> {flight_data.get('arrival_airport')}")
+                    print(f"    STD: {flight_data.get('std')}, STA: {flight_data.get('sta')}")
+                    print(f"    Booked: {flight_data.get('booked_count_economy')}/{flight_data.get('booked_count_non_economy')}")
+                    print(f"    Checked: {flight_data.get('checked_count_economy')}/{flight_data.get('checked_count_non_economy')}")
+                    print(f"    Bags: {flight_data.get('bags_count_piece')} pieces, {flight_data.get('bags_count_weight')} kg")
+        else:
+            print("No header flight found")
+    except Exception as e:
+        print(f"Database verification failed: {e}")
 
 
 if __name__ == "__main__":

@@ -8,11 +8,10 @@ from threading import Lock
 from bin.database.flight_add import FlightAdd
 from bin.database.flight_get import FlightGet
 from bin.scrapers.flightview_crawler import FlightViewCrawler
-from bin.scrapers.flightview_crawler import return_structure as FlightViewReturnStructure
-from bin.scrapers.flightstats_crawler import FlightStatsScraper
+from bin.scrapers.flightstats_crawler import FlightStatsCrawler
 
 
-def refresh_button(jcsy_text: str | None = None, max_workers: int = 3, timeout_seconds: int = 30) -> str:
+def refresh_button(jcsy_text: str | None = None, max_workers: int = 3, timeout_seconds: int = 10) -> str:
     """
     刷新航班数据的主要函数
     如果提供了 header_text，则刷新特定航班，否则刷新今天的航班
@@ -155,8 +154,8 @@ class FlightRefreshWorker:
         self.results_lock = Lock()
         self.results = []
         self.flightview_crawler = FlightViewCrawler()
-        self.flightstats_crawler = FlightStatsScraper()
-        self.flight_add = FlightAdd()
+        self.flightstats_crawler = FlightStatsCrawler()
+        self.flight_add = FlightAdd('jcsy_config.yaml')
         self.flight_get = FlightGet()
     
     def __del__(self):
@@ -221,7 +220,7 @@ class FlightRefreshWorker:
     def _update_flight_in_db(self, query_flight_id: int, crawler_result: dict):
         """
         使用来自爬虫的新时间数据更新指定的 query_flight 记录
-        支持 FlightView 和 FlightStats 两种数据格式
+        两种爬虫都返回相同的 return_structure 格式
         """
         if not crawler_result or not crawler_result.get('success'):
             print(f"No valid crawler data provided to update query_flight_id {query_flight_id}")
@@ -230,25 +229,12 @@ class FlightRefreshWorker:
         data = crawler_result.get('data')
         update_fields = {'table': 'query_flights', 'id': query_flight_id}
         try:
-            if source == 'flightview':
-                fields_to_update = ['std', 'etd', 'atd', 'sta', 'eta', 'ata']
-                for field in fields_to_update:
-                    value = getattr(data, field, None)
-                    if value is not None:
-                        update_fields[field] = value
-            elif source == 'flightstats':
-                dep_info = data.get('departure', {})
-                arr_info = data.get('arrival', {})
-                field_mapping = {'scheduled': 'std', 'estimated': 'etd', 'actual': 'atd'}
-                for fs_field, db_field in field_mapping.items():
-                    value = dep_info.get(fs_field)
-                    if value and value != 'N/A':
-                        update_fields[db_field] = value
-                field_mapping_arr = {'scheduled': 'sta', 'estimated': 'eta', 'actual': 'ata'}
-                for fs_field, db_field in field_mapping_arr.items():
-                    value = arr_info.get(fs_field)
-                    if value and value != 'N/A':
-                        update_fields[db_field] = value
+            # 两种爬虫都返回相同的 return_structure 格式
+            fields_to_update = ['std', 'etd', 'atd', 'sta', 'eta', 'ata']
+            for field in fields_to_update:
+                value = getattr(data, field, None)
+                if value is not None:
+                    update_fields[field] = value
             if len(update_fields) <= 2:
                 print(f"No valid data to update query_flight_id {query_flight_id}")
                 return False

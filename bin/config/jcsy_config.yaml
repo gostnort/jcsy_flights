@@ -16,7 +16,7 @@ title_line:
 
 flight:
   # Use the BKD position to divide the line
-  pattern: "^[A-Z]{2}\\d+"
+  pattern: "^[A-Z0-9]{2}\\d+"
   pre_process: "lambda line, ctx: {'flight_info': line[:ctx['bkd_position']].strip(), 'counts': line[ctx['bkd_position']:].strip()}"
   
   # Simple position-based extraction for flight info

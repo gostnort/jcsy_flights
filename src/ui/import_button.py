@@ -28,34 +28,35 @@ def import_button(jcsy_content: str, config_path: str = 'jcsy_config.yaml') -> s
     """
     if not jcsy_content or not jcsy_content.strip():
         return "Error: No JCSY content provided"
-    try:
-        # 初始化 FlightAdd 实例
-        flight_add = FlightAdd(config_path)
-        # 解析并添加 JCSY 内容到数据库
-        flight_ids = flight_add.add_jcsy_content(jcsy_content)
-        if not flight_ids:
-            return "Error: No flights were imported"
-        # 统计导入结果
-        header_count = 1  # 总是有一个 header
-        flight_segments_count = len(flight_ids) - header_count
-        # 生成详细的结果报告
-        report_lines = [f"Import completed successfully"]
-        report_lines.append(f"  Header records: {header_count}")
-        report_lines.append(f"  Flight segments: {flight_segments_count}")
-        report_lines.append(f"  Total records: {len(flight_ids)}")
-        # 显示导入的航班 ID
-        if flight_ids:
-            report_lines.append(f"  Imported flight IDs: {', '.join(map(str, flight_ids))}")
-        # 自动刷新航班时间数据
-        report_lines.append("")
-        report_lines.append("Starting automatic flight time refresh...")
-        refresh_result = refresh_button(jcsy_content)
-        report_lines.append(refresh_result)
-        return '\n'.join(report_lines)
-    except ValueError as e:
-        return f"Validation error: {str(e)}"
-    except FileNotFoundError as e:
-        return f"Configuration error: {str(e)}"
-    except Exception as e:
-        return f"Import failed: {str(e)}"
+    # 测试并确保数据库存在
+    db = FlightDatabase()
+    if not db.connection:
+        # 如果连接失败，尝试重新初始化数据库
+        db.initialize_database()
+        db.connect()
+        if not db.connection:
+            return "Error: Failed to initialize database"
+    # 初始化 FlightAdd 实例
+    flight_add = FlightAdd(config_path)
+    # 解析并添加 JCSY 内容到数据库
+    flight_ids = flight_add.add_jcsy_content(jcsy_content)
+    if not flight_ids:
+        return "Error: No flights were imported"
+    # 统计导入结果
+    header_count = 1  # 总是有一个 header
+    flight_segments_count = len(flight_ids) - header_count
+    # 生成详细的结果报告
+    report_lines = [f"Import completed successfully"]
+    report_lines.append(f"  Header records: {header_count}")
+    report_lines.append(f"  Flight segments: {flight_segments_count}")
+    report_lines.append(f"  Total records: {len(flight_ids)}")
+    # 显示导入的航班 ID
+    if flight_ids:
+        report_lines.append(f"  Imported flight IDs: {', '.join(map(str, flight_ids))}")
+    # 自动刷新航班时间数据
+    report_lines.append("")
+    report_lines.append("Starting automatic flight time refresh...")
+    refresh_result = refresh_button(jcsy_content)
+    report_lines.append(refresh_result)
+    return '\n'.join(report_lines)
 

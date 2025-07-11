@@ -66,8 +66,8 @@ class FlightAdd:
 
     def __init__(self, config_path: str ):
         """Initialize with database connection and config parser"""
-        # Use consistent database name - "flight.db" (without 's')
-        self.db_name = "flight.db"
+        # Use consistent database name from FlightDatabase
+        self.db_name = FlightDatabase.DEFAULT_DB_NAME
         self.db = FlightDatabase(self.db_name)
         self.parser = JcsyParser(config_path)
         # Mapping from the db fields key to the parser fields as the value.
@@ -149,12 +149,9 @@ class FlightAdd:
             header_airport = single_header_data_from_parser.get('header_airport', '')
             inbound_flag = single_header_data_from_parser.get('inbound_not', 0)
             
-            if inbound_flag == 1:  # Inbound flight - LAX is arrival, origin is departure
-                single_header_data_from_parser['arrival_airport'] = header_airport
-                single_header_data_from_parser['departure_airport'] = ''  # Will be filled by individual flights
-            else:  # Outbound flight - LAX is departure, destination is arrival  
-                single_header_data_from_parser['departure_airport'] = header_airport
-                single_header_data_from_parser['arrival_airport'] = ''  # Will be filled by individual flights
+            # Header flight airport is always departure_airport
+            single_header_data_from_parser['departure_airport'] = header_airport
+            single_header_data_from_parser['arrival_airport'] = ''  # Will be filled by individual flights
             
             # Remove the header_airport key as it's not a database field
             if 'header_airport' in single_header_data_from_parser:
@@ -176,29 +173,33 @@ class FlightAdd:
         flight_ids.append(header_id)       
         flight_data_list = self._get_data_from_parser('query_flights', self.QUERY_FLIGHT_FIELDS, parser_dict)       
         for flight_dict in flight_data_list:
-            flight_dict['jcsy_flight_id'] = header_id           
-            # inbound_not comes from the original parsed header data
-            header_airport = single_header_data_from_parser.get('arrival_airport') or single_header_data_from_parser.get('departure_airport')
-            
-            if single_header_data_from_parser.get('inbound_not') == 1:
-                # Inbound flight: LAX is arrival, individual airports are departures
+            flight_dict['jcsy_flight_id'] = header_id
+            # Get the original header airport from the parsed data
+            header_airport = parser_dict.get('header', {}).get('header_airport', '')
+            inbound_flag = single_header_data_from_parser.get('inbound_not', 0)
+            if inbound_flag == 1:
+                # Inbound flight: header airport is arrival, individual airports are departures
                 flight_dict['arrival_airport'] = header_airport  # LAX
                 flight_dict['departure_airport'] = flight_dict.get('airport', '')  # Origin airport
             else:
-                # Outbound flight: LAX is departure, individual airports are arrivals
-                flight_dict['departure_airport'] = header_airport  # LAX
+                # Outbound flight: header airport is departure, individual airports are arrivals
+                flight_dict['departure_airport'] = header_airport  # PEK
                 flight_dict['arrival_airport'] = flight_dict.get('airport', '')  # Destination airport
-            
             # Remove the 'airport' key as it's not a database field
             if 'airport' in flight_dict:
                 del flight_dict['airport']
-                
-            for field in ['booked_count_non_economy', 'booked_count_economy', 
+            for field in ['booked_count_non_economy', 'booked_count_economy',
                           'checked_count_non_economy', 'checked_count_economy',
                           'check_count_infant', 'bags_count_piece', 'bags_count_weight']:
                 if field in flight_dict and flight_dict[field] is None:
-                    flight_dict[field] = 0           
-            flight_ids.append(self._add_flight_record('query_flights', flight_dict))
+                    flight_dict[field] = 0
+            # Check for duplicate flight segment (same airline, flight_number, flight_date, departure_airport, arrival_airport)
+            existing_flight_id = self._check_duplicate_flight_segment(flight_dict)
+            if existing_flight_id:
+                print(f"Skipping duplicate flight: {flight_dict.get('airline')}{flight_dict.get('flight_number')} {flight_dict.get('departure_airport')}-{flight_dict.get('arrival_airport')}")
+                flight_ids.append(existing_flight_id)
+            else:
+                flight_ids.append(self._add_flight_record('query_flights', flight_dict))
         return flight_ids
 
 
@@ -264,6 +265,33 @@ class FlightAdd:
                 if result:
                     result_list.append(result)
         return result_list
+
+
+    def _check_duplicate_flight_segment(self, flight_dict: dict) -> int | None:
+        """
+        检查是否存在重复的航班段
+        基于 airline, flight_number, flight_date, departure_airport, arrival_airport 判断重复
+        返回已存在的航班ID，如果不存在则返回None
+        """
+        try:
+            with self.db:
+                query = """
+                    SELECT id FROM query_flights 
+                    WHERE airline = ? AND flight_number = ? AND flight_date = ? 
+                    AND departure_airport = ? AND arrival_airport = ?
+                """
+                self.db.cursor.execute(query, (
+                    flight_dict.get('airline'),
+                    flight_dict.get('flight_number'),
+                    flight_dict.get('flight_date'),
+                    flight_dict.get('departure_airport'),
+                    flight_dict.get('arrival_airport')
+                ))
+                result = self.db.cursor.fetchone()
+                return result[0] if result else None
+        except Exception as e:
+            print(f"Error checking for duplicate flight: {e}")
+            return None
         
 
     def update_flight(self, update_fields: dict):

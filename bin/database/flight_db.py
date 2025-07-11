@@ -3,11 +3,14 @@ import os
 
 
 class FlightDatabase:
+    # 标准数据库名称
+    DEFAULT_DB_NAME = "flights.db"
+    
     def __init__(self, db_name: str = ""):
         # Store database in src/database directory
         src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if db_name == "":
-            self.db_path = os.path.join(src_dir, "src", "database", "flights.db")
+            self.db_path = os.path.join(src_dir, "src", "database", self.DEFAULT_DB_NAME)
         else:
             self.db_path = os.path.join(src_dir, "src", "database", db_name)
         self.db_name = db_name # Store the db_name for potential use by tests

@@ -8,7 +8,7 @@ class FlightGet:
     def __init__(self, db_name: str | None = None, path_without_db_name: str = ""):
         final_db_spec: str
         if db_name is None:
-            # Default behavior: use FlightDatabase.DEFAULT_DB_NAME in standard location relative to this file's project structure
+            # Default behavior: use "flights.db" in standard location relative to this file's project structure
             src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # .../FlightInfoSystem
             # Ensure "src/database" exists for the default flights.db (FlightDatabase constructor handles this too)
             db_dir_for_default = os.path.join(src_dir, "src", "database")
@@ -19,8 +19,6 @@ class FlightGet:
             if path_without_db_name != "": # if path_without_db_name is given, it overrides default dir for default DB name
                 final_db_spec = os.path.join(path_without_db_name, FlightDatabase.DEFAULT_DB_NAME)
 
-        elif db_name == ":memory:":
-            final_db_spec = ":memory:"
         else: # A specific db_name (filename) is given
             if path_without_db_name == "":
                 src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
