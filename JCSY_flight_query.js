@@ -92,6 +92,13 @@
         const jcsyText = inputArea.value;
         if (!jcsyText.trim()) { alert('输入内容不能为空。'); return; }
 
+        const flightDate = _get_flight_date_from_jcsy(jcsyText);
+        if (!flightDate) {
+            alert('无法从 JCSY 文本中提取有效的航班日期。请确保第一行格式正确 (例如: JCSY:CA0984/02SEP/LAX,I)。');
+            return;
+        }
+        sessionStorage.setItem('flightDate', flightDate);
+
         // 将原始文本存入 sessionStorage，以便在页面跳转后恢复。
         // sessionStorage 是浏览器的一个临时存储区域，数据在标签页关闭后清除。
         // 由于脚本需要在多个页面之间传递数据（每次搜索都是一个新页面），因此必须使用它。
@@ -152,6 +159,22 @@
     });
 
     /**
+     * @description 从 JCSY 文本的第一行提取航班日期。
+     * @param {string} jcsyText - 完整的 JCSY 文本。
+     * @returns {string|null} - 提取到的日期字符串（例如 "02SEP"），如果找不到则返回 null。
+     */
+    function _get_flight_date_from_jcsy(jcsyText) {
+        const firstLine = jcsyText.split('\n')[0];
+        if (firstLine && firstLine.startsWith('JCSY:')) {
+            const parts = firstLine.split('/');
+            if (parts.length > 2) {
+                return parts[1];
+            }
+        }
+        return null;
+    }
+
+    /**
      * @description 处理航班队列中的下一个航班，或者在队列为空时生成最终结果。
      * 这是脚本的核心调度函数。
      */
@@ -205,7 +228,7 @@
             const originalURL = sessionStorage.getItem('originalURL');
 
             // 4. 清理本次任务在 sessionStorage 中存储的所有数据。
-            ['flightQueue', 'resultsMap', 'currentFlightNumber', 'originalURL', 'originalJCSY'].forEach(k => sessionStorage.removeItem(k));
+            ['flightQueue', 'resultsMap', 'currentFlightNumber', 'originalURL', 'originalJCSY', 'flightDate'].forEach(k => sessionStorage.removeItem(k));
 
             // 5. 返回到最初的页面。
             window.location.href = originalURL;
@@ -218,8 +241,9 @@
         sessionStorage.setItem('flightQueue', JSON.stringify(flightQueue)); // 更新队列
         sessionStorage.setItem('currentFlightNumber', nextFlightNumber); // 记录当前正在查询的航班
 
+        const flightDate = sessionStorage.getItem('flightDate');
         // 构建Google搜索查询，并跳转到搜索结果页面。
-        const searchQuery = `${nextFlightNumber} flight`;
+        const searchQuery = `${nextFlightNumber} ${flightDate} flight`;
         window.location.href = 'https://www.google.com/search?q=' + encodeURIComponent(searchQuery);
     }
 
@@ -241,42 +265,46 @@
             let arrivalTime = '未能找到';
             try {
                 // Google页面的航班信息在一个特定的 `div` 容器中。
-                const mainContainer = document.querySelector(`div[data-async-context*="query:${currentFlightNumber}"]`);
+                const flightDate = sessionStorage.getItem('flightDate');
+                const mainContainer = document.querySelector(`div[data-async-context*="query:${currentFlightNumber}%20${flightDate}%20flight"]`);
                 if (mainContainer) {
-                    // 1. 查找包含日期的抬头，并验证日期是否为今天或昨天。
-                    const headerRegex = new RegExp(`${DESTINATION_CITY}\\s+·\\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\\s+([A-Za-z]{3}\\s+\\d{1,2})`);
-                    const headerElement = Array.from(mainContainer.querySelectorAll('div')).find(div => headerRegex.test(div.textContent));
-                    if (headerElement) {
-                        const match = headerElement.textContent.match(headerRegex);
-                        const dateString = match[1]; // 例如: "Sep 2"
-                        const today = new Date();
-                        const yesterday = new Date();
-                        yesterday.setDate(today.getDate() - 1);
-                        const arrivalDate = new Date(`${dateString} ${today.getFullYear()}`);
-                        today.setHours(0, 0, 0, 0); yesterday.setHours(0, 0, 0, 0); arrivalDate.setHours(0, 0, 0, 0);
+                    const headerRegex = new RegExp(`${DESTINATION_CITY}\\s+·\\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\\s+\\d{1,2}`);
+                    const arrivalLabels = ['Arrived', 'Estimated arrival', 'Scheduled arrival'];
 
-                        const isDateValid = (arrivalDate.getTime() === today.getTime() || arrivalDate.getTime() === yesterday.getTime());
-                        if (isDateValid) {
-                            // 2. 如果日期有效，则查找包含具体时间（例如 "11:55 AM"）的元素。
-                            const arrivalLabels = ['Estimated arrival', 'Scheduled arrival', 'Arrived'];
-                            const timeRegex = /\d{1,2}:\d{2}\s(AM|PM)/;
-                            const timeContainer = Array.from(mainContainer.querySelectorAll('div, span')).find(el => {
-                                const text = el.textContent;
-                                return arrivalLabels.some(label => text.includes(label)) && timeRegex.test(text);
-                            });
+                    const potentialContainers = Array.from(mainContainer.querySelectorAll('div')).filter(div => {
+                        const text = div.textContent;
+                        const hasHeader = headerRegex.test(text);
+                        const hasArrivalLabel = arrivalLabels.some(label => text.includes(label));
+                        return hasHeader && hasArrivalLabel;
+                    });
 
-                            if (timeContainer) {
-                                const timeMatch = timeContainer.textContent.match(timeRegex);
-                                if (timeMatch) {
-                                    // 格式化时间文本，去除多余的空白字符。
-                                    arrivalTime = timeMatch[0].replace(/\s+/g, ' ');
-                                }
+                    const flightInfoBlock = potentialContainers.reduce((acc, el) => {
+                        if (!acc || el.textContent.length < acc.textContent.length) {
+                            return el;
+                        }
+                        return acc;
+                    }, null);
+
+                    if (flightInfoBlock) {
+                        const timeRegex = /\d{1,2}:\d{2}/;
+                        const allElements = Array.from(flightInfoBlock.querySelectorAll('div, span'));
+                        let timeContainer = null;
+
+                        for (const label of arrivalLabels) {
+                            timeContainer = allElements.find(el => el.textContent.includes(label) && timeRegex.test(el.textContent));
+                            if (timeContainer) break;
+                        }
+
+                        if (timeContainer) {
+                            const timeMatch = timeContainer.textContent.match(timeRegex);
+                            if (timeMatch) {
+                                arrivalTime = timeMatch[0];
                             }
                         } else {
-                            arrivalTime = '日期不符';
+                            arrivalTime = '未找到时间';
                         }
                     } else {
-                        arrivalTime = '未找到日期抬头';
+                        arrivalTime = '未找到航班区块';
                     }
                 } else {
                     arrivalTime = '未找到航班主区块';
