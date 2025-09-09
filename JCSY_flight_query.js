@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         JCSY航班自动查询工具
 // @namespace    http://tampermonkey.net/
-// @version      0.7
+// @version      0.61
 // @description  在原始JCSY文本的ARVL列中就地回填查询结果，并完美对齐格式。
 // @author       You
 // @match        *://*.google.com/*
 // @icon         https://www.google.com/favicon.ico
 // @grant        GM_addStyle
+// @grant        GM_download
 // @run-at       document-end
 // @noframes
 // ==/UserScript==
@@ -51,13 +52,19 @@
       #gsh-buttons { display: flex; margin-top: 10px; gap: 10px; }
       #gsh-go, #gsh-stop {
         flex-grow: 1; padding: 8px 16px; color: #fff;
-        border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+        border: none; border-radius: 8px; cursor: pointer; font-size: 14px; text-align: center;
       }
       #gsh-go { background: #1a73e8; }
       #gsh-go:hover { background: #1558b0; }
       #gsh-go:disabled { background: #ccc; cursor: not-allowed; }
       #gsh-stop { background: #d93025; }
       #gsh-stop:hover { background: #a50e0e; }
+      #gsh-options { display: flex; align-items: center; margin-top: 10px; font-size: 12px; color: #555; }
+      #gsh-autosave-label { margin-left: 5px; user-select: none; cursor: pointer; }
+      #gsh-autosave {
+        margin: 0;
+        vertical-align: middle;
+      }
     `);
 
     // --- [3] HTML 结构 ---
@@ -75,6 +82,10 @@
             <button id="gsh-go">开始查询</button>
             <button id="gsh-stop" style="display: none;">停止</button>
         </div>
+        <div id="gsh-options">
+            <input type="checkbox" id="gsh-autosave" checked>
+            <label for="gsh-autosave" id="gsh-autosave-label" title="在每次查询时，自动将Google搜索结果页面保存到浏览器默认的'下载'文件夹中。">自动保存页面</label>
+        </div>
       </div>
     `;
     document.body.append(panel);
@@ -85,6 +96,7 @@
     const inputArea = panel.querySelector('#gsh-q');
     const startButton = panel.querySelector('#gsh-go');
     const stopButton = panel.querySelector('#gsh-stop');
+    const autoSaveCheckbox = panel.querySelector('#gsh-autosave');
     const closeButton = panel.querySelector('#gsh-close');
 
     // “开始查询”按钮的点击事件
@@ -248,6 +260,74 @@
     }
 
     /**
+     * @description 生成一个在指定范围内的随机延迟时间（毫秒）。
+     * @param {number} minSeconds - 最小秒数。
+     * @param {number} maxSeconds - 最大秒数。
+     * @returns {number} - 随机的毫秒数。
+     */
+    function getRandomDelay(minSeconds, maxSeconds) {
+        const minMilliseconds = minSeconds * 1000;
+        const maxMilliseconds = maxSeconds * 1000;
+        return Math.floor(Math.random() * (maxMilliseconds - minMilliseconds + 1)) + minMilliseconds;
+    }
+
+    /**
+     * @description 在按钮上显示倒计时。
+     * @param {HTMLElement} button - 要更新文本的按钮元素。
+     * @param {number} totalMilliseconds - 倒计时的总毫秒数。
+     * @param {string} baseText - 倒计时前缀文本。
+     * @returns {number} - setInterval 返回的 interval ID，用于之后清除。
+     */
+    function startButtonCountdown(button, totalMilliseconds, baseText) {
+        let remaining = totalMilliseconds;
+        const updateText = () => {
+            const seconds = Math.ceil(remaining / 1000);
+            button.textContent = `${baseText} (${seconds}s)`;
+        };
+
+        updateText(); // 立即显示第一次
+        const intervalId = setInterval(() => {
+            remaining -= 1000;
+            if (remaining > 0) updateText();
+        }, 1000);
+
+        return intervalId;
+    }
+
+    /**
+     * @description 自动保存当前页面到 'Downloads/searched_flight' 文件夹。
+     */
+    function autoSavePage() {
+        console.log("Attempting to auto-save page...");
+        try {
+            const pageHtml = document.documentElement.outerHTML;
+            const blob = new Blob([pageHtml], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+
+            const flightNumber = sessionStorage.getItem('currentFlightNumber');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-'); // e.g., 2023-10-27T10-30-00-000Z
+            
+            // Simplified filename, saving directly to the Downloads folder to improve reliability.
+            const filename = `JCSY-Query-${flightNumber}-${timestamp}.txt`;
+            console.log(`Preparing to download with filename: ${filename}`);
+
+            // Use the object syntax for GM_download to include an error handler.
+            GM_download({
+                url: url,
+                name: filename,
+                onerror: (error) => {
+                    console.error('GM_download failed:', error);
+                    alert(`自动保存页面失败！\n\n错误详情: ${error.error}\n\n这可能是因为浏览器阻止了下载，或者脚本权限不足。请检查浏览器右上角的下载提示或Tampermonkey设置。`);
+                },
+                onload: () => console.log(`Successfully initiated download for ${filename}.`)
+            });
+        } catch (e) {
+            console.error("自动保存页面时发生错误:", e);
+            alert("自动保存页面失败！\n\n这可能是因为脚本没有下载文件的权限。请在Tampermonkey的设置中检查脚本权限。");
+        }
+    }
+
+    /**
      * @description 在Google搜索结果页面上抓取航班到达时间。
      */
     function scrapeAndContinue() {
@@ -255,21 +335,36 @@
         // 如果 sessionStorage 中没有 currentFlightNumber，说明当前不是搜索结果页面，直接返回。
         if (!currentFlightNumber) return;
 
+        // 检查当前是否为最后一个航班。
+        // 此时 flightQueue 已被更新，如果为空，则表示当前是最后一个。
+        const flightQueue = JSON.parse(sessionStorage.getItem('flightQueue')) || [];
+        const isLastFlight = flightQueue.length === 0;
+
         // 更新UI，显示当前正在查询的航班号。
         startButton.disabled = true;
         stopButton.style.display = 'inline-block';
-        startButton.textContent = `查询中... (${currentFlightNumber})`;
+        const baseButtonText = `查询中... (${currentFlightNumber})`;
 
-        // 设置一个短暂的延时，等待Google页面的航班信息动态加载完成。
-        setTimeout(() => {
+        // 定义核心的抓取和处理逻辑
+        const scrapeAndProceed = (countdownInterval) => {
             let arrivalTime = '未能找到';
+            
+            // 如果有倒计时，则清除
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+
+            // 如果勾选了自动保存，则执行保存操作
+            if (autoSaveCheckbox.checked) {
+                autoSavePage();
+            }
             try {
                 // Google页面的航班信息在一个特定的 `div` 容器中。
                 const flightDate = sessionStorage.getItem('flightDate');
                 const mainContainer = document.querySelector(`div[data-async-context*="query:${currentFlightNumber}%20${flightDate}%20flight"]`);
                 if (mainContainer) {
                     const headerRegex = new RegExp(`${DESTINATION_CITY}\\s+·\\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\\s+\\d{1,2}`);
-                    const arrivalLabels = ['Arrived', 'Estimated arrival', 'Scheduled arrival'];
+                    const arrivalLabels = ['Arrived','Landed', 'Estimated arrival', 'Scheduled arrival'];
 
                     const potentialContainers = Array.from(mainContainer.querySelectorAll('div')).filter(div => {
                         const text = div.textContent;
@@ -321,7 +416,18 @@
 
             // 处理队列中的下一个航班。
             processNextFlight();
-        }, 1500); // 1.5秒的延时
+        };
+
+        // 如果是最后一个航班，则立即执行，无需等待。
+        if (isLastFlight) {
+            startButton.textContent = `${baseButtonText} - 完成处理...`;
+            scrapeAndProceed(null);
+        } else {
+            // 如果后面还有航班，则设置随机延时以模拟用户行为。
+            const randomDelay = getRandomDelay(2, 10);
+            const countdownInterval = startButtonCountdown(startButton, randomDelay, baseButtonText);
+            setTimeout(() => scrapeAndProceed(countdownInterval), randomDelay);
+        }
     }
 
     /**
